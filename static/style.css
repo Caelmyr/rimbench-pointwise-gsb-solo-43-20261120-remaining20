@@ -35,3 +35,13 @@ dialog{padding:0;border:1px solid var(--line);border-radius:12px;max-width:min(6
 .audit-grid-image svg{height:100%;pointer-events:none}
 #audit-result:focus{outline:none}
 #audit-result:focus-visible{outline:2px solid #65a895;outline-offset:2px}
+.chart-legend .legend-step{width:11px;height:11px;border:1px solid #24735f;border-radius:2px;background:#d7e9e1}
+.chart-legend .legend-step.used{background:#c4ded3}
+.chart-legend .legend-step.value{border-color:#1d6f94;background:#e4eef4}
+.chart-legend .legend-step.spacing{border-style:dashed;border-color:#657c75;background:#f3f6f4}
+.chart-legend .legend-step.mark{border:none;background:#1d6f94;clip-path:polygon(50% 100%,0 0,100% 0)}
+.chart-legend .legend-step.review{border:none;background:#bb6a24;clip-path:polygon(50% 100%,0 0,100% 0)}
+#step-summary .status-line.step-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid #e3ebe6}
+#step-summary table{font-size:11px}
+#step-summary td,#step-summary th{padding:5px 7px}
+.step-review .notice{margin:6px 0;padding:8px 11px;font-size:12px}

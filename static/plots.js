@@ -77,7 +77,10 @@ export function axialPlot(curve, activeZ, {xName="Z / mm", pointControls=true, t
   const x = z => L+(z-zMin)/(zMax-zMin)*(R-L);
   const all = curve.samples.flatMap(row => row.interval ?? (row.value == null ? [] : [row.value]));
   if (!all.length) return '<div class="plot-empty">所选范围没有可测量的截线。</div>';
-  const min = Math.min(...all), max = Math.max(...all);
+  const steps = curve.steps;
+  const shoulderValues = (steps?.shoulders ?? []).flatMap(row => [row.half_level, row.left?.level, row.right?.level]).filter(v=>v!=null);
+  const min = Math.min(...all, ...(shoulderValues.length?shoulderValues:all));
+  const max = Math.max(...all, ...(shoulderValues.length?shoulderValues:all));
   const pad = Math.max((max-min)*0.09, 0.04);
   const y = value => BOT-(value-min+pad)/(max-min+2*pad)*(BOT-TOP);
   let body = gridX(ticks(zMin,zMax), x,zMin,zMax)+gridY(ticks(min-pad,max+pad),y,min-pad,max+pad);
@@ -85,6 +88,7 @@ export function axialPlot(curve, activeZ, {xName="Z / mm", pointControls=true, t
     const points = [...run.map(row => [row.z,row.interval[0]]), ...run.slice().reverse().map(row=>[row.z,row.interval[1]])];
     body += `<polygon points="${polygonPath(points,x,y)}" fill="#cde5d9"/>`;
   }
+  body += stepLayer(steps, x, y, zMin, zMax);
   for (const run of segments(curve.samples, row => row.value != null)) {
     body += `<polyline points="${polygonPath(run.map(row=>[row.z,row.value]),x,y)}" fill="none" stroke="#237864" stroke-width="2.4"/>`;
   }
@@ -95,7 +99,66 @@ export function axialPlot(curve, activeZ, {xName="Z / mm", pointControls=true, t
     const interaction = pointControls ? `data-sample-z="${row.z}" role="button" tabindex="0" aria-label="截面 ${f(row.z)} 毫米" style="cursor:pointer"` : "";
     return `<circle ${interaction} cx="${x(row.z)}" cy="${yy}" r="4" fill="${fill}" stroke="white"><title>${esc(xName)} ${f(row.z)} · ${f(row.value)} ${esc(curve.units)}</title></circle>`;
   }).join("");
-  return wrap(title, body, `<text x="522" y="328" text-anchor="end">${esc(xName)}</text><text x="17" y="17">${esc(curve.units)}</text>`);
+  return wrap(title, body, `<text x="522" y="328" text-anchor="end">${esc(xName)}</text><text x="17" y="17">${esc(curve.units)}${steps?.shoulders?.length?" · 肩位点":""}</text>`);
+}
+
+const STEP_COLORS = {shoulder:"#1d6f94", ambiguous:"#bb6a24", missing:"#8a5c8f"};
+
+function stepLayer(steps, x, y, zMin, zMax) {
+  if (!steps || !(steps.segments?.length || steps.shoulders?.length)) return "";
+  let marks = "";
+  for (const segment of steps.segments ?? []) {
+    if (!segment.used || segment.interval == null) continue;
+    const left = Math.max(segment.start_z, zMin), right = Math.min(segment.end_z, zMax);
+    if (right < left) continue;
+    const top = y(segment.interval[1]), bottom = y(segment.interval[0]);
+    marks += `<rect x="${x(left)}" y="${Math.min(top,bottom)}" width="${Math.max(1,x(right)-x(left))}"
+      height="${Math.max(1,Math.abs(bottom-top))}" fill="#24735f" fill-opacity="0.20" stroke="#24735f" stroke-width="1.1">
+      <title>稳定段 ${f(segment.start_z)} – ${f(segment.end_z)} mm · ${f(segment.level)} ${esc(steps.units)}</title></rect>`;
+    marks += `<line x1="${x(left)}" x2="${x(right)}" y1="${y(segment.level)}" y2="${y(segment.level)}" stroke="#175a4a" stroke-width="1.4" stroke-dasharray="3 2"/>`;
+  }
+  for (const spike of steps.spikes ?? []) {
+    if (spike.value == null) continue;
+    marks += `<circle cx="${x(spike.z)}" cy="${y(spike.value)}" r="5" fill="none" stroke="#b04a3c" stroke-width="1.3">
+      <title>尖峰 ${f(spike.z)} mm · 已排除</title></circle>`;
+  }
+  for (const shoulder of steps.shoulders ?? []) {
+    const span = shoulder.spacing_range;
+    if (span) {
+      marks += `<rect x="${x(span[0])}" y="${TOP}" width="${Math.max(1,x(span[1])-x(span[0]))}" height="${BOT-TOP}"
+        fill="${STEP_COLORS[shoulder.state] ?? "#657c75"}" fill-opacity="0.10">
+        <title>采样间隔允许的肩位范围 ${f(span[0])} – ${f(span[1])} mm</title></rect>`;
+    }
+    if (shoulder.interval) {
+      marks += `<line x1="${x(shoulder.interval[0])}" x2="${x(shoulder.interval[1])}" y1="${BOT-7}" y2="${BOT-7}"
+        stroke="${STEP_COLORS[shoulder.state] ?? "#657c75"}" stroke-width="3"><title>测值区间 ${f(shoulder.interval[0])} – ${f(shoulder.interval[1])} mm</title></line>`;
+    }
+    if (shoulder.half_level != null) {
+      const transition = shoulder.transition;
+      marks += `<line x1="${x(transition.start_z)}" x2="${x(transition.end_z)}" y1="${y(shoulder.half_level)}" y2="${y(shoulder.half_level)}"
+        stroke="${STEP_COLORS[shoulder.state] ?? "#657c75"}" stroke-width="1.2" stroke-dasharray="2 2">
+        <title>半高 ${f(shoulder.half_level)} ${esc(shoulder.units)}</title></line>`;
+      marks += `<circle cx="${x(shoulder.left.used_end_z)}" cy="${y(shoulder.left.level)}" r="2.4" fill="#175a4a"/>
+        <circle cx="${x(shoulder.right.used_start_z)}" cy="${y(shoulder.right.level)}" r="2.4" fill="#175a4a"/>`;
+    }
+    if (shoulder.z != null) {
+      marks += `<line x1="${x(shoulder.z)}" x2="${x(shoulder.z)}" y1="${y(shoulder.half_level ?? shoulder.left.level)}" y2="${BOT-9}"
+        stroke="${STEP_COLORS[shoulder.state] ?? "#657c75"}" stroke-width="1" stroke-dasharray="2 3"/>`;
+      marks += `<path d="M${x(shoulder.z)-4.5},${TOP+3}L${x(shoulder.z)+4.5},${TOP+3}L${x(shoulder.z)},${TOP+11}Z"
+        fill="${STEP_COLORS[shoulder.state] ?? "#657c75"}">
+        <title>肩位 ${f(shoulder.z)} mm（${esc(shoulder.detail)}）</title></path>`;
+    } else {
+      const gap = shoulder.transition;
+      marks += `<rect x="${x(gap.start_z)}" y="${TOP}" width="${Math.max(2,x(gap.end_z)-x(gap.start_z))}" height="${BOT-TOP}"
+        fill="${STEP_COLORS[shoulder.state]}" fill-opacity="0.13" stroke="${STEP_COLORS[shoulder.state]}" stroke-dasharray="3 3">
+        <title>肩位缺测 ${f(gap.start_z)} – ${f(gap.end_z)} mm</title></rect>`;
+    }
+    if (shoulder.state === "ambiguous") {
+      marks += `<text x="${x(shoulder.z ?? (shoulder.transition.start_z+shoulder.transition.end_z)/2)}" y="${TOP+22}"
+        text-anchor="middle" fill="#9a531b" font-size="10">补测</text>`;
+    }
+  }
+  return marks;
 }
 
 export function observationOverlay(view, frame, z, width, height) {

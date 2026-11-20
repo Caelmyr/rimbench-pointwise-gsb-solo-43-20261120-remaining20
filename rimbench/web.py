@@ -443,9 +443,13 @@ def register_measurements(app):
     @app.get(path+"/profile.csv")
     def profile_download(identity):
         args = ProfileRequest.parse(request.args.to_dict())
+        part = choice(request.args.get("part", "samples"), "曲线导出内容", ("samples", "steps"))
 
         def write(meter):
             result = profile(meter, args)
+            if part == "steps":
+                return _download(documents.profile_steps_csv(result), meter.project.title,
+                                 "台阶肩位", "csv", "text/csv; charset=utf-8")
             return _download(documents.profile_csv(result), meter.project.title, "轴向曲线", "csv", "text/csv; charset=utf-8")
 
         return _in_meter(identity, write)

@@ -7,6 +7,7 @@ from .calibration import z_positions
 from .domain import InspectionError, choice, degrees, integer, number, record
 from .geometry import METRIC_LABELS, METRIC_UNITS
 from .meter import healthy_range, shape_section
+from .steps import analyze_steps
 
 
 PROFILE_METRICS = tuple(METRIC_LABELS)
@@ -52,14 +53,20 @@ def profile(meter, request):
         for z, observations in zip(positions, results)
     ]
     quantities = summarize(samples, request.metric)
+    simplified = [simplify_section(item, request.metric) for item in samples]
+    steps = analyze_steps(
+        simplified, metric=request.metric,
+        units=METRIC_UNITS[request.metric], direction=request.direction,
+    )
     return {
         "revision": meter.project.revision,
         "project_id": meter.project.id,
         "parameters": request.data(),
         "units": METRIC_UNITS[request.metric],
         "metric_label": METRIC_LABELS[request.metric],
-        "samples": [simplify_section(item, request.metric) for item in samples],
+        "samples": simplified,
         "summary": quantities,
+        "steps": steps,
     }
 
 

@@ -178,7 +178,9 @@ async function measureTab(seq) {
     </div>
     <div class="section-grid spaced">
       ${panel("轴向尺寸曲线","",`<div class="panel-body">${profileForm()}</div><div id="axial-plot" class="chart-frame">${axialPlot(active.curve,active.z)}</div>
-      <div id="profile-summary" class="status-line">${curveSummary()}</div>`)}
+      <div class="chart-legend"><span><i class="legend-step used"></i>两侧稳定段</span><span><i class="legend-step value"></i>测值区间</span>
+      <span><i class="legend-step spacing"></i>采样间隔允许范围</span><span><i class="legend-step mark"></i>肩位</span><span><i class="legend-step review"></i>需补测</span></div>
+      <div id="profile-summary" class="status-line">${curveSummary()}</div><div id="step-summary">${stepSummary()}</div>`)}
       ${panel("支撑证据",`<span class="subtext">最大法线缺口 ${f(s.normal_coverage.gap,1)}°</span>`,evidenceTable(s))}
     </div>`;
   bindMeasurement();
@@ -193,12 +195,47 @@ function profileForm() {
 }
 
 function profileDownload() {
-  return active.curve ? `<a class="button quiet" href="${base()}/profile.csv?${qs(active.curve.parameters)}">CSV</a>` : "";
+  if (!active.curve) return "";
+  const query = qs(active.curve.parameters);
+  return `<a class="button quiet" href="${base()}/profile.csv?${query}">CSV</a>
+    <a class="button quiet" href="${base()}/profile.csv?${query}&part=steps">肩位 CSV</a>`;
 }
 
 function curveSummary() {
   const r = active.curve?.summary;
   return r ? `${r.measured}/${r.total} 层有效 · 极差 ${f(r.variation)} ${active.curve.units} · ${r.missing_ranges.length} 处缺测区` : "点击曲线上的取样点可联动截面与角度影像。";
+}
+
+const stepLabels = {measured:"已认定", ambiguous:"需补测", missing:"缺测", rejected:"不成台阶", "no-step":"无台阶", "review-required":"需补测", partial:"部分认定", "not-applicable":"不适用", insufficient:"采样不足", "no-curve":"无曲线"};
+const stepPill = state => `<span class="pill ${state==="review-required"||state==="ambiguous"?"warn":state==="measured"||state==="partial"?"good":state==="missing"?"bad":""}">${esc(stepLabels[state] || state)}</span>`;
+
+function stepSummary() {
+  const steps = active.curve?.steps;
+  if (!steps) return "";
+  const spacing = steps.sample_spacing;
+  const parts = [`<div class="status-line step-line">${stepPill(steps.state)} <span>${esc(steps.detail)}</span>
+    <span class="subtext">采样间隔 ${f(spacing?.spacing,3)} mm · 可区分分辨率 ${f(steps.resolution,3)} ${esc(active.curve.units)}</span></div>`];
+  if (steps.shoulders.length) {
+    parts.push(`<div class="data-wrap"><table><thead><tr><th scope="col">肩位</th><th scope="col">状态</th><th scope="col">高度 / mm</th><th scope="col">测值区间 / mm</th><th scope="col">采样间隔允许范围 / mm</th><th scope="col">两侧稳定段</th><th scope="col">台阶高度</th></tr></thead><tbody>
+      ${steps.shoulders.map(row=>`<tr><td>${row.id+1}</td><td>${stepPill(row.state)}</td><td>${row.z==null?"—":f(row.z,3)}</td>
+        <td>${span(row.interval)}</td><td>${span(row.spacing_range)}</td>
+        <td class="subtext">${segmentSpan(steps,row.left.segment)} ‖ ${segmentSpan(steps,row.right.segment)}</td>
+        <td>${row.step?f(row.step.height,3):"—"}</td></tr>`).join("")}</tbody></table></div>`);
+  }
+  if (steps.pairs.length) {
+    parts.push(`<div class="data-wrap"><table><thead><tr><th scope="col">肩距</th><th scope="col">距离 / mm</th><th scope="col">测值区间 / mm</th><th scope="col">采样间隔允许范围 / mm</th></tr></thead><tbody>
+      ${steps.pairs.map(row=>`<tr><td>肩 ${row.first+1} → ${row.second+1}</td><td>${f(row.distance,3)}</td><td>${span(row.interval)}</td><td>${span(row.spacing_range)}</td></tr>`).join("")}</tbody></table></div>`);
+  }
+  if (steps.review_spans.length) {
+    parts.push(`<div class="panel-body step-review">${steps.review_spans.map(row=>`<p class="notice ${row.kind==="dense"?"warning":""}">
+      <b>${row.kind==="dense"?"需补测":"缺测保留"}</b> · ${f(row.start_z,2)}–${f(row.end_z,2)} mm${row.suggested_spacing?` · 建议采样间隔 ${f(row.suggested_spacing,2)} mm`:""} · ${esc(row.detail)}</p>`).join("")}</div>`);
+  }
+  return parts.join("");
+}
+
+function segmentSpan(steps, identity) {
+  const segment = steps.segments.find(row=>row.id===identity);
+  return segment ? `${f(segment.start_z,2)}–${f(segment.end_z,2)} mm` : "—";
 }
 
 function evidenceTable(s) {
@@ -227,6 +264,7 @@ function bindMeasurement() {
     active.curve = curve;
     $("#axial-plot").innerHTML = axialPlot(curve,active.z);
     $("#profile-summary").textContent = curveSummary();
+    $("#step-summary").innerHTML = stepSummary();
     $("#profile-download").innerHTML = profileDownload();
     bindSamples();
   });

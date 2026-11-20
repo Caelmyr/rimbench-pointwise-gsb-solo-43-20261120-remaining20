@@ -19,6 +19,7 @@ STATES = {
     "empty": "未见主体", "too-narrow": "轮廓过窄", "disconnected": "分段", "image-rejected": "影像不可用",
     "pass": "合格", "fail": "超差", "review": "待复测", "unavailable": "暂无结果",
     "comparable": "可比较", "current-gap": "本次缺测", "reference-gap": "参考缺测", "outside-reference": "不在复测重叠区",
+    "shoulder": "已认定", "ambiguous": "待补测", "missing": "缺测", "rejected": "不成台阶",
 }
 
 
@@ -62,6 +63,44 @@ def profile_csv(result):
         high = _bound(row["interval"], 1)
         rows.append([row["z"], row["value"], unit, low, high, row["usable_views"],
                      row["max_angle_gap"], STATES.get(row["state"], row["state"]), params["direction"], result["revision"]])
+    return _csv_fields(rows)
+
+
+def profile_steps_csv(result):
+    steps = result.get("steps") or {}
+    spacing = (steps.get("sample_spacing") or {}).get("spacing")
+    measured = {
+        segment["id"]: f"{_bound(segment['interval'], 0)} – {_bound(segment['interval'], 1)}"
+        for segment in steps.get("segments") or []
+    }
+    rows = [["类别", "序号", "状态", "肩位高度 (mm)", "测值区间下限 (mm)", "测值区间上限 (mm)",
+             "采样间隔范围下限 (mm)", "采样间隔范围上限 (mm)", "左侧稳定段尺寸区间 (mm)",
+             "右侧稳定段尺寸区间 (mm)", "台阶高度 (mm)", "肩距 (mm)", "说明"]]
+    for shoulder in steps.get("shoulders") or []:
+        low, high = shoulder.get("interval") or (None, None)
+        allowed_low, allowed_high = shoulder.get("spacing_range") or (None, None)
+        rows.append([
+            "肩位", shoulder["id"], STATES.get(shoulder["state"], shoulder["state"]),
+            shoulder["z"], low, high, allowed_low, allowed_high,
+            measured.get(shoulder["left"].get("segment"), ""),
+            measured.get(shoulder["right"].get("segment"), ""),
+            (shoulder.get("step") or {}).get("height"), "",
+            "；".join(shoulder.get("flags") or []) or shoulder.get("detail", ""),
+        ])
+    for pair in steps.get("pairs") or []:
+        low, high = pair.get("interval") or (None, None)
+        allowed_low, allowed_high = pair.get("spacing_range") or (None, None)
+        rows.append([
+            "肩距", f"{pair['first']}-{pair['second']}", STATES.get(pair["state"], pair["state"]),
+            "", low, high, allowed_low, allowed_high, "", "", "", pair["distance"],
+            f"采样间隔 {spacing:.9g} mm" if spacing else "",
+        ])
+    for item in steps.get("review_spans") or []:
+        rows.append([
+            "补测" if item["kind"] == "dense" else "缺测", item["shoulder"],
+            "需要更密截面" if item["kind"] == "dense" else "缺测保留",
+            "", "", "", item["start_z"], item["end_z"], "", "", "", "", item["detail"],
+        ])
     return _csv_fields(rows)
 
 
@@ -287,6 +326,48 @@ def _curve_summary(curve):
         [curve["metric_label"], curve["units"], summary["measured"], summary["total"],
          _human(summary["variation"]), _human(summary["length_between_valid"])]
     ]
-    return "<h2>轴向范围概要</h2>"+_table(
+    body = "<h2>轴向范围概要</h2>"+_table(
         ["量值", "单位", "已测量", "采样数", "极差", "首末有效点间距 (mm)"], rows,
     )
+    return body+_step_summary(curve.get("steps"))
+
+
+def _step_summary(steps):
+    if not steps:
+        return ""
+    spacing = (steps.get("sample_spacing") or {}).get("spacing")
+    note = escape(
+        f"采样间隔 {_human(spacing)} mm · 可区分分辨率 {_human(steps.get('resolution'))} · "
+        "测值区间来自两侧稳定段尺寸区间的半高，采样间隔允许范围来自半高所在的相邻层。"
+    )
+    shoulders = steps.get("shoulders") or []
+    reading = _table(
+        ["状态", "肩位 (mm)", "测值区间 (mm)", "采样间隔允许范围 (mm)",
+         "左侧稳定段 (mm)", "右侧稳定段 (mm)", "台阶高度 (mm)", "说明"],
+        [[STATES.get(row["state"], row["state"]), _human(row["z"]), _format_interval(row["interval"]),
+          _format_interval(row["spacing_range"]),
+          _segment_span(steps, row["left"].get("segment")), _segment_span(steps, row["right"].get("segment")),
+          _human((row.get("step") or {}).get("height")), escape(row.get("detail", ""))]
+         for row in shoulders],
+    ) if shoulders else "<p>选定高度内没有认定肩位。</p>"
+    pairs = steps.get("pairs") or []
+    spacing_rows = _table(
+        ["肩距 (mm)", "测值区间 (mm)", "采样间隔允许范围 (mm)", "状态"],
+        [[_human(row["distance"]), _format_interval(row["interval"]),
+          _format_interval(row.get("spacing_range")), STATES.get(row["state"], row["state"])] for row in pairs],
+    ) if pairs else ""
+    review = steps.get("review_spans") or []
+    review_rows = _table(
+        ["类别", "高度范围 (mm)", "建议采样间隔 (mm)", "说明"],
+        [["需要补测" if row["kind"] == "dense" else "缺测保留",
+          f"{_human(row['start_z'])} – {_human(row['end_z'])}",
+          _human(row.get("suggested_spacing")), escape(row["detail"])] for row in review],
+    ) if review else ""
+    return f"<h2>台阶与肩位</h2><p>{escape(steps.get('detail') or '')}。{note}</p>{reading}{spacing_rows}{review_rows}"
+
+
+def _segment_span(steps, identity):
+    for segment in steps.get("segments") or []:
+        if segment["id"] == identity:
+            return f"{_human(segment['start_z'])} – {_human(segment['end_z'])}"
+    return "—"
