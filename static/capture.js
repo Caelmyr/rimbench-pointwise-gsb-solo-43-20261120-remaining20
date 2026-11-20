@@ -1,4 +1,4 @@
-import {$, $$, api, dialog, esc, f, field, formObject, guarded, panel, pill, qs, select, table, toast} from "./ui.js";
+import {$, $$, api, dialog, esc, f, field, formObject, guarded, panel, pill, select, table, toast} from "./ui.js";
 
 const imageTypes = ".png,.jpg,.jpeg,.tif,.tiff,.bmp";
 const labelMap = {
@@ -25,7 +25,7 @@ export async function captureTab(ctx, current) {
       ${p.calibration?panel("轴标定与像素比例",'<button type="button" id="target">两点标靶</button>',`
         <form id="calibration" class="panel-body form-grid">${Object.entries(p.calibration).map(([key,value])=>field(key,labelMap[key],value)).join("")}
         <div class="span-all row-actions"><button type="submit">应用轴标定</button><span class="subtext">${p.width} × ${p.height} px · ${f(p.calibration.scale_px/p.calibration.scale_mm,4)} px/mm</span></div></form>`):""}
-      ${view?panel("细节取景",`<span class="subtext">${esc(view.title)}</span>`,cropMarkup(p)):""}</div>
+      ${view?panel("原图细节",`<span class="subtext">${esc(view.title)}</span>`,detailNote(p)):""}</div>
     <div class="stack">
       ${panel("轮廓配方","",`<form class="panel-body form-grid" id="recipe">${Object.entries(p.segmentation).map(([key,value])=>field(key,labelMap[key],value)).join("")}
         <div class="span-all"><button type="submit">应用轮廓配方</button></div></form>`)}
@@ -36,12 +36,12 @@ export async function captureTab(ctx, current) {
   bind(ctx, view);
 }
 
-function cropMarkup(p) {
-  return `<form id="crop-form" class="inline-form panel-body">${field("x","原图 X",Math.round(p.width*0.34),{min:0})}
-    ${field("y","原图 Y",Math.round(p.height*0.34),{min:0})}
-    ${field("width","取景宽度",Math.max(2,Math.round(p.width*0.3)),{min:2})}
-    ${field("height","取景高度",Math.max(2,Math.round(p.height*0.3)),{min:2})}
-    <button type="submit">查看细节</button></form><div id="crop-content"></div>`;
+function detailNote(p) {
+  const note = p.reference
+    ? "原图细览在「截面测量」的角度影像下方，可滚轮缩放、拖动平移并切换原图与轮廓叠层。"
+    : "在「截面测量」打开角度影像，可在原图细览中缩放、平移、点选像素并切换轮廓叠层。";
+  return `<div class="panel-body"><p class="subtext">${note}</p>
+    <button type="button" id="open-detail">打开原图细览</button></div>`;
 }
 
 function referencePanel(ctx, ref) {
@@ -108,9 +108,9 @@ function bind(ctx, view) {
     const r = result.summary.reference_drift;
     $("#reference-result").innerHTML = `<p class="notice">亮度中位偏差 ${f(r.median*100)} 个百分点 · ${r.outside_five_percent_cells} 格超过 5 个百分点</p>`;
   },"比较");
-  if (view) $("#crop-form").onsubmit = guarded(event=>{
-    const values = formObject(event.currentTarget);
-    $("#crop-content").innerHTML = `<img class="small-image" alt="原图局部" src="${base()}/views/${view.id}/crop?${qs(values)}">`;
+  if (view) $("#open-detail").onclick = guarded(()=>{
+    active.view = view.id;
+    return ctx.navigate("measure");
   });
 }
 

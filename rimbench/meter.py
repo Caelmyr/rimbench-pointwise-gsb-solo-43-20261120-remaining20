@@ -13,7 +13,7 @@ from .geometry import (
     active_support, bounded_polygon, center, circular_gap, clash_witness,
     metrics, polygon_list, support_planes,
 )
-from .images import gray_from_png, reference_faults
+from .images import gray_from_png, raster_from_png, reference_faults
 from .silhouette import Silhouette, extract, observation
 
 
@@ -61,6 +61,11 @@ class Meter:
             ("gray", asset), lambda: gray_from_png(self.load(asset)[1]), lambda value: value.nbytes,
         )
 
+    def raster(self, asset):
+        return self.cache.acquire(
+            ("raster", asset), lambda: raster_from_png(self.load(asset)[1]), lambda value: value.nbytes,
+        )
+
     def view_mask(self, view):
         recipe = self.project.segmentation
         reference = self.project.reference
@@ -85,10 +90,12 @@ class Meter:
     def inspect_view(self, view: View, z):
         shape = self.view_mask(view)
         frame = self.axis()
+        measured = observation(shape, frame, self.project.segmentation, view, z)
         return {
             "view": view.data(), "image": shape.summary,
             "axis": frame.geometry(view),
-            "observation": observation(shape, frame, self.project.segmentation, view, z),
+            "observation": measured,
+            "guides": view_guides(shape, frame, view, z, measured),
             "asset": self.load(view.asset)[0].data(),
         }
 
@@ -195,3 +202,51 @@ def healthy_range(section, metric):
     values = section.get("intervals") or {}
     bounds = values.get(metric)
     return bounds if bounds and all(math.isfinite(v) for v in bounds) else None
+
+
+def view_guides(silhouette, axis, view, z, observed):
+    """Lines and endpoint marks in image pixels for the selected section.
+
+    Both the full preview and the detail crop clip these same coordinates, so a
+    cut line and its end marks stay on the same original pixels at any zoom.
+    """
+    line = axis.sample_line(z, view)
+    cross = None
+    if line is not None:
+        lower, upper = line[0], line[1]
+        start = axis.to_image(lower, z, view)
+        end = axis.to_image(upper, z, view)
+        # The sampled run length is capped so a large frame cannot make this
+        # guide collection unbounded; at most this many points mark the body.
+        count = max(2, min(4096, int(math.ceil((upper-lower)*axis.scale*2))+1))
+        step = (upper-lower)/(count-1)
+        points = [axis.to_image(lower+step*i, z, view) for i in range(count)]
+        inside = _inside_runs(silhouette.mask, points)
+        cross = {
+            "line": [list(start), list(end)],
+            "inside": inside,
+        }
+    return {
+        "z": z,
+        "axis": axis.geometry(view),
+        "cross_section": cross,
+        "endpoints": observed.get("endpoints"),
+        "origin": list(axis.to_image(0, z, view)),
+    }
+
+
+def _inside_runs(mask, points):
+    height, width = mask.shape
+    runs = []
+    current = []
+    for x, y in points:
+        column = int(round(x))
+        row = int(round(y))
+        if 0 <= row < height and 0 <= column < width and bool(mask[row, column]):
+            current.append([round(float(x), 4), round(float(y), 4)])
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    return runs

@@ -1,5 +1,6 @@
 import {$, $$, api, dialog, esc, f, field, formObject, guarded, panel, pill, qs, select, span, table, toast, metrics} from "./ui.js";
 import {axialPlot, cards, observationOverlay, sectionPlot} from "./plots.js";
+import {detailMarkup, mountDetail} from "./detail.js";
 import {captureTab} from "./capture.js";
 import {inspectionTab} from "./inspection.js";
 import {gaugesTab, recordsTab} from "./records.js";
@@ -9,10 +10,12 @@ const active = {
   overview:null, measure:null, curve:null, profile:null, light:null, snapshot:null,
   request:0,
 };
+const detail = {project:null, view:null, scale:0, cx:0, cy:0, selected:null, lastKey:null, lastLayer:null, layer:"overlay"};
 const work = $("#work-panel");
 const base = () => "/api/projects/"+active.project.id;
 const args = () => qs({z:active.z, direction:active.direction});
-const context = {active, work, base, args, refresh, render, update, navigate, measureAt};
+const context = {active, work, base, args, refresh, render, update, navigate, measureAt, detail, setImageMode};
+let detailController = null;
 
 async function list() {
   const data = await api("/api/projects");
@@ -50,6 +53,13 @@ async function openProject(identity, already) {
       active.profile = {lower:f(range.lower),upper:f(range.upper),count:31,metric:"width",direction:0};
     }
   }
+  detail.cx = project.width/2 || 0;
+  detail.cy = project.height/2 || 0;
+  detail.scale = 0;
+  detail.selected = null;
+  detail.lastKey = null;
+  detail.lastLayer = null;
+  detail.view = null;
   header();
   await Promise.all([list(),render()]);
 }
@@ -75,7 +85,11 @@ async function refresh(project) {
   active.measure = null;
   active.curve = null;
   active.light = null;
-  if (!active.project.views.some(row=>row.id===active.view)) active.view = active.project.views[0]?.id;
+  if (!active.project.views.some(row=>row.id===active.view)) {
+    active.view = active.project.views[0]?.id;
+    detail.selected = null;
+    detail.view = null;
+  }
   if (active.project.views.length) {
     active.overview = await api(base()+"/overview");
     const range = active.overview.suggested;
@@ -166,11 +180,16 @@ async function measureTab(seq) {
     </form>
     <div class="section-grid">
       ${panel("角度影像",pill(inspected.observation.state),`
-        <div class="image-toolbar">${viewSelect}${select("image-mode","图层",{overlay:"原图与轮廓",original:"原图",normalized:"归一图"},active.imageMode)}</div>
-        <div class="visual-frame cursor" style="--aspect:${p.width}/${p.height}">
-        <img class="camera" id="measure-photo" src="${image}?mode=${active.imageMode==="normalized"?"normalized":"original"}&v=${p.revision}" alt="所选角度计量原图">
-        ${active.imageMode==="overlay"?`<img class="image-overlay" src="${image}?mode=overlay&v=${p.revision}" alt="">`:""}
-        ${observationOverlay(inspected,active.overview,active.z,p.width,p.height)}</div>
+        <div class="image-toolbar">${viewSelect}
+          ${select("image-mode","预览图层",{overlay:"原图与轮廓",original:"原图",normalized:"归一图"},active.imageMode)}
+          <span class="toolbar-note">概览用于定位；下方细览按需读取原图，可放大到单个像素。</span></div>
+        <div class="section-media">
+          <div class="visual-frame cursor" style="--aspect:${p.width}/${p.height}">
+          <img class="camera" id="measure-photo" src="${image}?mode=${active.imageMode==="normalized"?"normalized":"original"}&v=${p.revision}" alt="所选角度计量原图">
+          <img class="image-overlay" id="measure-overlay" src="${image}?mode=overlay&size=1100&v=${p.revision}" alt="" ${active.imageMode==="overlay"?"":"hidden"}>
+          ${observationOverlay(inspected,active.overview,active.z,p.width,p.height)}</div>
+          ${detailMarkup(active)}
+        </div>
         <div class="status-line" id="pixel-location">${esc(inspected.observation.reason)}</div>`)}
       ${panel("重建截面",pill(s.state),`<div class="chart-frame">${sectionPlot(s,active.view)}</div>
         <div class="chart-legend"><span><i class="legend-line"></i>标称轮廓</span><span><i class="legend-line outer"></i>外包络</span>
@@ -182,6 +201,27 @@ async function measureTab(seq) {
       ${panel("支撑证据",`<span class="subtext">最大法线缺口 ${f(s.normal_coverage.gap,1)}°</span>`,evidenceTable(s))}
     </div>`;
   bindMeasurement();
+  detailController = mountDetail(context, inspected);
+}
+
+function setImageMode(mode) {
+  const value = mode === "normalized" ? "normalized" : mode;
+  if (active.imageMode === value) return;
+  active.imageMode = value;
+  // The detail view keeps its own two-layer switch; keep it on the same layer.
+  detail.layer = value === "normalized" ? "original" : value;
+  const selector = $('[name="image-mode"]');
+  if (selector) selector.value = value;
+  $$('[data-detail-mode]').forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.detailMode === detail.layer));
+  });
+  // The overview is part of the same view, so it is reloaded rather than
+  // rebuilding the whole panel — this keeps the detail position on screen.
+  const photo = $("#measure-photo");
+  const overlay = $("#measure-overlay");
+  const display = value === "normalized" ? "normalized" : "original";
+  if (photo) photo.src = base()+"/views/"+active.view+"/image?mode="+display+"&v="+active.project.revision;
+  if (overlay) overlay.hidden = value !== "overlay";
 }
 
 function profileForm() {
@@ -215,8 +255,13 @@ function bindMeasurement() {
     const values = formObject(event.currentTarget);
     return measureAt(values.z,values.direction);
   });
-  $("#inspect-angle").onchange = guarded(event=>{active.view=event.currentTarget.value; return render();});
-  $('[name="image-mode"]').onchange = guarded(event=>{active.imageMode=event.currentTarget.value; return render();});
+  $("#inspect-angle").onchange = guarded(event=>{
+    active.view = event.currentTarget.value;
+    detail.selected = null;
+    detail.view = null;
+    return render();
+  });
+  $('[name="image-mode"]').onchange = guarded(event=>setImageMode(event.currentTarget.value));
   $$("[data-observation]").forEach(button=>button.onclick=guarded(()=>{active.view=button.dataset.observation; return render();}));
   $("#profile-form").onsubmit = guarded(async event=>{
     const params = {...formObject(event.currentTarget),direction:active.direction};
@@ -235,12 +280,14 @@ function bindMeasurement() {
     const rect = img.getBoundingClientRect();
     const {width,height} = active.project;
     const zoom = Math.min(rect.width/width,rect.height/height);
-    const x = (event.clientX-rect.left-(rect.width-zoom*width)/2)/zoom;
-    const y = (event.clientY-rect.top-(rect.height-zoom*height)/2)/zoom;
+    const x = Math.floor((event.clientX-rect.left-(rect.width-zoom*width)/2)/zoom);
+    const y = Math.floor((event.clientY-rect.top-(rect.height-zoom*height)/2)/zoom);
     if (x<0 || y<0 || x>width-1 || y>height-1) return;
+    // Recentre the detail view on the overview click and let it report the pixel.
+    detailController?.focus(x, y);
     const click = await api(base()+"/views/"+active.view+"/coordinate?"+qs({x,y}));
     const location = $("#pixel-location");
-    if (location) location.textContent = `原图 (${f(x,1)}, ${f(y,1)}) px · 径向 ${f(click.radial_mm)} mm · 高度 ${f(click.z_mm)} mm`;
+    if (location) location.textContent = `原图 (${x}, ${y}) px · 径向 ${f(click.radial_mm)} mm · 高度 ${f(click.z_mm)} mm`;
   });
   bindSamples();
 }

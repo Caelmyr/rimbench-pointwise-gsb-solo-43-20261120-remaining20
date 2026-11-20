@@ -169,15 +169,6 @@ def _edge(radial, index, direction):
     return value
 
 
-def overlay_png(silhouette):
-    mask = silhouette.mask
-    contour = mask & ~ndimage.binary_erosion(mask)
-    canvas = np.zeros((*mask.shape, 4), dtype=np.uint8)
-    canvas[mask] = [4, 175, 145, 68]
-    canvas[contour] = [55, 233, 192, 255]
-    return png_from_array(canvas)
-
-
 def ratio_preview(silhouette, maximum=512):
     array = silhouette.threshold_image
     factor = max(1, int(math.ceil(max(array.shape)/maximum)))

@@ -74,6 +74,20 @@ def gray_from_png(payload):
         return (rgb[..., 0]*0.2126+rgb[..., 1]*0.7152+rgb[..., 2]*0.0722)/255
 
 
+def raster_from_png(payload):
+    """Native display raster: uint16 for 16-bit gray, uint8 for 8-bit and colour.
+
+    Storage is lossless, so the returned values are the actual pixel values and
+    must not be scaled before reporting them.
+    """
+    with Image.open(BytesIO(payload)) as image:
+        if image.mode.startswith("I"):
+            return np.asarray(image, dtype=np.uint16)
+        if image.mode == "L":
+            return np.asarray(image, dtype=np.uint8)
+        return np.asarray(image.convert("RGB"), dtype=np.uint8)
+
+
 def image_stats(gray):
     height, width = gray.shape
     stride = max(1, int(np.sqrt(height*width/220_000)))
@@ -107,23 +121,6 @@ def thumbnail(payload, long_edge):
         stream = BytesIO()
         image.save(stream, "PNG", compress_level=4)
         return stream.getvalue()
-
-
-def crop_png(payload, bounds, long_edge):
-    with Image.open(BytesIO(payload)) as source:
-        x, y, width, height = bounds
-        right = min(source.width, x+width)
-        bottom = min(source.height, y+height)
-        if right <= x or bottom <= y:
-            raise InspectionError("取景框不在原影像内。", status=416, code="crop")
-        image = source.crop((x, y, right, bottom))
-        if image.mode.startswith("I"):
-            raster = np.asarray(image, dtype=np.float32)
-            image = Image.fromarray(np.round(raster/257).astype(np.uint8))
-        image.thumbnail((long_edge, long_edge), Image.Resampling.LANCZOS)
-        stream = BytesIO()
-        image.save(stream, "PNG", compress_level=4)
-        return stream.getvalue(), (x, y, right-x, bottom-y)
 
 
 def reference_stats(gray):

@@ -9,7 +9,7 @@ import threading
 from flask import Flask, Response, current_app, jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from . import audit, audit_docs, documents, fieldcheck, geometry, gridtarget, lighting, quality, setup
+from . import audit, audit_docs, detail, documents, fieldcheck, geometry, gridtarget, lighting, quality, setup
 from .compare import compare_profiles, compare_sections
 from .demo import make_demo
 from .domain import (
@@ -17,14 +17,14 @@ from .domain import (
     choice, degrees, integer, number, record,
 )
 from .exchange import MAX_ARCHIVE_BYTES, build_bundle, open_bundle
-from .images import crop_png, gray_from_png, ingest, thumbnail
+from .images import gray_from_png, ingest, thumbnail
 from .meter import ImageCache, Meter
 from .profile import ProfileRequest, profile, suggested_range
 from .repeats import available_pairs
-from .silhouette import overlay_png, ratio_preview
+from .silhouette import ratio_preview
 from .snapshots import capture, public_snapshot
 from .store import Store
-from .targets import Window, propose_axis, synthetic_target
+from .targets import propose_axis, synthetic_target
 
 
 STATIC = Path(__file__).resolve().parents[1]/"static"
@@ -357,21 +357,46 @@ def register_captures(app):
                 response.set_etag(f"{meta.sha256}-{edge}")
                 return response.make_conditional(request)
             silhouette = meter.view_mask(item)
-            return _png(overlay_png(silhouette) if mode == "overlay" else ratio_preview(silhouette, edge))
+            if mode == "normalized":
+                return _png(ratio_preview(silhouette, edge))
+            if mode == "overlay":
+                return _png(detail.overlay_frame(meter.raster(item.asset), silhouette.mask, edge))
+            return _png(thumbnail(meter.load(item.asset)[1], edge))
 
         return _in_meter(identity, write)
 
     @app.get(path+"/<view>/crop")
     def view_crop(identity, view):
+        overlay = request.args.get("overlay", "0") == "1"
+        long_edge = integer(request.args.get("size", 1200), "取景最大边长", 32, 4096)
+
         def write(meter):
             p = meter.project
             item = setup.lookup_view(p, view)
-            bounds = Window.parse({k: request.args.get(k) for k in ("x", "y", "width", "height")}, p.width, p.height, minimum=2)
-            extent = (bounds.x, bounds.y, bounds.width, bounds.height)
-            image, actual = crop_png(meter.load(item.asset)[1], extent, 1200)
+            window = detail.DetailWindow.parse({k: request.args.get(k) for k in ("x", "y", "width", "height")}, p.width, p.height)
+            image, shown = detail.window_image(
+                meter.raster(item.asset), window,
+                mask=meter.view_mask(item).mask if overlay else None,
+                overlay=overlay, long_edge=long_edge,
+            )
             response = _png(image)
-            response.headers["X-RimBench-Crop"] = ",".join(str(x) for x in actual)
+            response.headers["X-RimBench-Crop"] = ",".join(str(v) for v in (
+                window.x, window.y, window.width, window.height, shown["width"], shown["height"],
+            ))
+            response.headers["Cache-Control"] = "no-store"
             return response
+
+        return _in_meter(identity, write)
+
+    @app.get(path+"/<view>/pixel")
+    def view_pixel(identity, view):
+        project = _store().project(identity)
+        x = integer(request.args.get("x"), "像素横坐标", 0, max(0, project.width-1))
+        y = integer(request.args.get("y"), "像素纵坐标", 0, max(0, project.height-1))
+
+        def write(meter):
+            item = setup.lookup_view(meter.project, view)
+            return detail.pixel_value(meter.raster(item.asset), meter.view_mask(item).mask, x, y)
 
         return _in_meter(identity, write)
 
