@@ -10,6 +10,7 @@ from flask import Flask, Response, current_app, jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from . import audit, audit_docs, documents, fieldcheck, geometry, gridtarget, lighting, quality, setup
+from . import caliper
 from .compare import compare_profiles, compare_sections
 from .demo import make_demo
 from .domain import (
@@ -449,6 +450,27 @@ def register_measurements(app):
             return _download(documents.profile_csv(result), meter.project.title, "轴向曲线", "csv", "text/csv; charset=utf-8")
 
         return _in_meter(identity, write)
+
+    @app.post(path+"/caliper")
+    @app.post(path+"/caliper.csv")
+    def caliper_align(identity):
+        params = _multipart_arguments("卡尺复检")
+        _, payload = _one_upload("caliper", maximum=caliper.CALIPER_BYTES)
+        direction = degrees(params.get("direction", 0))
+        shift_limit = number(params.get("shift_limit", 5), "高度补偿范围", 0, 100000)
+        if shift_limit <= 0:
+            raise InspectionError("高度补偿范围必须大于零。", code="caliper-shift-limit")
+        audit.frozen_revision(params, _store().project(identity).revision)
+        readings = caliper.parse_caliper_csv(payload)
+
+        def calculate(meter):
+            result = caliper.run_alignment(meter, readings, direction, shift_limit)
+            if request.path.endswith(".csv"):
+                return _download(documents.caliper_csv(result), meter.project.title,
+                                 "卡尺复检对零", "csv", "text/csv; charset=utf-8")
+            return result
+
+        return _in_meter(identity, calculate)
 
 
 def register_gauges(app):

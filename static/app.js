@@ -3,10 +3,12 @@ import {axialPlot, cards, observationOverlay, sectionPlot} from "./plots.js";
 import {captureTab} from "./capture.js";
 import {inspectionTab} from "./inspection.js";
 import {gaugesTab, recordsTab} from "./records.js";
+import {bindCaliper, caliperDialog, caliperPanel} from "./caliper.js";
 
 const active = {
   project:null, list:[], view:null, tab:"measure", z:22, direction:0, imageMode:"overlay",
   overview:null, measure:null, curve:null, profile:null, light:null, snapshot:null,
+  caliper:null, caliperFile:null, caliperBlob:null,
   request:0,
 };
 const work = $("#work-panel");
@@ -37,6 +39,9 @@ async function openProject(identity, already) {
   active.curve = null;
   active.snapshot = null;
   active.light = null;
+  active.caliper = null;
+  active.caliperFile = null;
+  active.caliperBlob = null;
   active.z = 22;
   active.direction = 0;
   localStorage.setItem("rimbench.active",identity);
@@ -177,11 +182,13 @@ async function measureTab(seq) {
         <span><i class="legend-line inner"></i>内包络</span><span>${s.usable_views} / ${p.views.length} 个有效角度</span></div>${cards(s)}`)}
     </div>
     <div class="section-grid spaced">
-      ${panel("轴向尺寸曲线","",`<div class="panel-body">${profileForm()}</div><div id="axial-plot" class="chart-frame">${axialPlot(active.curve,active.z)}</div>
+      ${panel("轴向尺寸曲线",'<button type="button" id="caliper-entry" class="quiet">卡尺复检对零</button>',`<div class="panel-body">${profileForm()}</div><div id="axial-plot" class="chart-frame">${axialPlot(active.curve,active.z)}</div>
       <div id="profile-summary" class="status-line">${curveSummary()}</div>`)}
       ${panel("支撑证据",`<span class="subtext">最大法线缺口 ${f(s.normal_coverage.gap,1)}°</span>`,evidenceTable(s))}
-    </div>`;
+    </div>
+    ${caliperPanel(context)}`;
   bindMeasurement();
+  bindCaliper(context);
 }
 
 function profileForm() {
@@ -242,6 +249,7 @@ function bindMeasurement() {
     const location = $("#pixel-location");
     if (location) location.textContent = `原图 (${f(x,1)}, ${f(y,1)}) px · 径向 ${f(click.radial_mm)} mm · 高度 ${f(click.z_mm)} mm`;
   });
+  $("#caliper-entry").onclick = ()=>caliperDialog(context);
   bindSamples();
 }
 

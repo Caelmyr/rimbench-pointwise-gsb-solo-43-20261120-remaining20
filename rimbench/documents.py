@@ -78,6 +78,56 @@ def comparisons_csv(result):
     return _csv_fields(rows)
 
 
+CALIPER_STATES = {
+    "caliper-match": "宽度相符",
+    "caliper-mismatch": "宽度不符",
+    "caliper-gap": "落入缺测区",
+    "caliper-outside": "超出转台测量区间",
+}
+CALIPER_DECISIONS = {
+    "determined": "可以定零位",
+    "ambiguous": "还不能定零位",
+    "no-fit": "没有可行补偿",
+    "insufficient": "可比读数不足",
+}
+
+
+def caliper_csv(result):
+    rows = [
+        ["卡尺复检对零结果"],
+        ["结论", CALIPER_DECISIONS.get(result["decision"], result["decision"])],
+        ["说明", result["detail"]],
+        ["测量方向 (°)", result["direction"]],
+        ["补偿允许范围 (mm)", f"±{result['shift_limit']:g}"],
+        ["代表性补偿 (mm)", result["representative_shift"]],
+        ["最多可比读数", result["n_max"]],
+        ["读数总数", result["total_readings"]],
+        [],
+        ["可行补偿下限 (mm)", "可行补偿上限 (mm)", "代表补偿 (mm)", "可比读数",
+         "相符", "宽度不符", "落入缺测区", "超出测量区间"],
+    ]
+    for candidate in result["candidates"]:
+        rows.append([
+            candidate["shift_low"], candidate["shift_high"], candidate["shift"],
+            candidate["comparable"], candidate["matches"], candidate["mismatches"],
+            candidate["gaps"], candidate["outside"],
+        ])
+    rows.extend(([], [
+        "序号", "卡尺高度 (mm)", "卡尺宽度 (mm)", "对齐后高度 (mm)", "采用补偿 (mm)",
+        "转台宽度 (mm)", "转台区间下限 (mm)", "转台区间上限 (mm)",
+        "宽度差值 (mm)", "转台采样起点 (mm)", "转台采样终点 (mm)", "核对状态", "不可比/判定原因",
+    ]))
+    for row in result["rows"]:
+        interval = row["reference_interval"] or [None, None]
+        span = row["reference_span"] or [None, None]
+        rows.append([
+            row["index"], row["caliper_z"], row["caliper_width"], row["aligned_z"], row["shift"],
+            row["reference_value"], interval[0], interval[1], row["delta_width"],
+            span[0], span[1], CALIPER_STATES.get(row["state"], row["state"]), row["reason"],
+        ])
+    return _csv_fields(rows)
+
+
 def gauges_csv(result):
     rows = [["量规", "量值", "高度 (mm)", "方向 (°)", "下限", "标称", "上限", "单位",
              "实测值", "区间下限", "区间上限", "判定", "判定依据", "样件版本"]]
