@@ -7,6 +7,7 @@ const labelMap = {
   cutoff:"暗部阈值", min_area:"最小主体 / px²", close_radius:"闭合半径 / px",
   ambiguity_px:"端点误差 / px", min_span:"最短截线 / px", inset:"画面边距 / px",
 };
+const checkLabels = {compensate_drift:"背光漂移补偿（可关闭）"};
 
 export async function captureTab(ctx, current) {
   const {active, work, base} = ctx;
@@ -27,13 +28,18 @@ export async function captureTab(ctx, current) {
         <div class="span-all row-actions"><button type="submit">应用轴标定</button><span class="subtext">${p.width} × ${p.height} px · ${f(p.calibration.scale_px/p.calibration.scale_mm,4)} px/mm</span></div></form>`):""}
       ${view?panel("细节取景",`<span class="subtext">${esc(view.title)}</span>`,cropMarkup(p)):""}</div>
     <div class="stack">
-      ${panel("轮廓配方","",`<form class="panel-body form-grid" id="recipe">${Object.entries(p.segmentation).map(([key,value])=>field(key,labelMap[key],value)).join("")}
+      ${panel("轮廓配方","",`<form class="panel-body form-grid" id="recipe">${Object.entries(p.segmentation).map(([key,value])=>key in checkLabels?checkBox(key,value):field(key,labelMap[key],value)).join("")}
+        <div class="span-all subtext">开启后只用当前角度图里能确认为背景的区域，对照原空场估计缓慢亮度变化；物体暗面和局部反光不作证据，某一侧缺少可信参照时该张保留原处理。</div>
         <div class="span-all"><button type="submit">应用轮廓配方</button></div></form>`)}
       ${panel("背光空场",`<button type="button" id="reference-upload">${p.reference?"更换参考":"上传参考"}</button>`,referencePanel(ctx,reference))}
       ${panel("角度覆盖","",coverage(p))}
     </div>
   </div>`;
   bind(ctx, view);
+}
+
+function checkBox(key, value) {
+  return `<label class="check span-all"><input type="checkbox" name="${key}" ${value?"checked":""}>${esc(checkLabels[key])}</label>`;
 }
 
 function cropMarkup(p) {
@@ -89,7 +95,9 @@ function bind(ctx, view) {
   const applyForm = (selector,path) => {
     const form = $(selector);
     if (form) form.onsubmit = guarded(async event=>{
-      await update(path,formObject(event.currentTarget));
+      const values = formObject(event.currentTarget);
+      Object.keys(checkLabels).forEach(key=>{values[key]=event.currentTarget.elements[key]?.checked??false;});
+      await update(path,values);
       toast("设置已应用");
     });
   };

@@ -6,6 +6,9 @@ import math
 import numpy as np
 from scipy import ndimage
 
+from .drift import disabled as drift_disabled
+from .drift import estimate as drift_estimate
+from .drift import no_reference as drift_no_reference
 from .images import image_stats, png_from_array
 
 
@@ -14,13 +17,18 @@ class Silhouette:
     mask: np.ndarray
     threshold_image: np.ndarray
     summary: dict
+    drift: object | None = None
 
 
-def extract(gray, settings, exposure, reference=None):
+def extract(gray, settings, exposure, reference=None, decision=None):
     source = gray/exposure
-    if reference is not None:
-        ratio = source/np.maximum(reference, 0.10)
-        unlit = reference < 0.18
+    if reference is not None and decision is not None and decision.model is not None:
+        corrected = np.maximum(reference*decision.gain(gray.shape), 0.10)
+    else:
+        corrected = reference
+    if corrected is not None:
+        ratio = source/np.maximum(corrected, 0.10)
+        unlit = corrected < 0.18
     else:
         levels = image_stats(gray)["quantiles"]
         gain = max(0.24, levels[3]/exposure)
@@ -63,8 +71,19 @@ def extract(gray, settings, exposure, reference=None):
             "histogram": stats["histogram"],
             "quantiles": stats["quantiles"],
             "warnings": warnings,
+            "drift": decision.data() if decision is not None else None,
         },
+        decision,
     )
+
+
+def decide(gray, settings, exposure, reference):
+    """Choose the background that normalizes this frame and record why."""
+    if reference is None:
+        return drift_no_reference()
+    if not settings.compensate_drift:
+        return drift_disabled()
+    return drift_estimate(gray/exposure, reference)
 
 
 def _disk(radius):
@@ -113,7 +132,10 @@ def _contrast(gray, mask, unlit):
 
 
 def observation(silhouette, axis, settings, view, z):
-    view_info = {"view_id": view.id, "angle": view.angle, "title": view.title, "z": z}
+    view_info = {
+        "view_id": view.id, "angle": view.angle, "title": view.title, "z": z,
+        "drift": _drift_state(silhouette),
+    }
     if not view.included:
         return {**view_info, "state": "excluded", "reason": "本角度未参与截面。"}
     if not silhouette.summary["valid"]:
@@ -154,6 +176,13 @@ def observation(silhouette, axis, settings, view, z):
         "span_px": round(float((right_edge-left_edge)*axis.scale), 4),
         "edge_error_mm": max(settings.ambiguity_px/axis.scale, step_px/(2*axis.scale)),
     }
+
+
+def _drift_state(silhouette):
+    summary = silhouette.summary.get("drift")
+    if not summary:
+        return None
+    return {key: summary.get(key) for key in ("state", "reason", "gain_range")}
 
 
 def _runs(sampled):

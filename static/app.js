@@ -166,12 +166,14 @@ async function measureTab(seq) {
     </form>
     <div class="section-grid">
       ${panel("角度影像",pill(inspected.observation.state),`
-        <div class="image-toolbar">${viewSelect}${select("image-mode","图层",{overlay:"原图与轮廓",original:"原图",normalized:"归一图"},active.imageMode)}</div>
+        <div class="image-toolbar">${viewSelect}${select("image-mode","图层",{overlay:"原图与轮廓",original:"原图",normalized:"归一图",drift:"漂移补偿"},active.imageMode)}</div>
         <div class="visual-frame cursor" style="--aspect:${p.width}/${p.height}">
         <img class="camera" id="measure-photo" src="${image}?mode=${active.imageMode==="normalized"?"normalized":"original"}&v=${p.revision}" alt="所选角度计量原图">
         ${active.imageMode==="overlay"?`<img class="image-overlay" src="${image}?mode=overlay&v=${p.revision}" alt="">`:""}
+        ${active.imageMode==="drift"?`<img class="image-overlay" src="${image}?mode=drift&v=${p.revision}" alt="">`:""}
         ${observationOverlay(inspected,active.overview,active.z,p.width,p.height)}</div>
-        <div class="status-line" id="pixel-location">${esc(inspected.observation.reason)}</div>`)}
+        <div class="status-line" id="pixel-location">${esc(inspected.observation.reason)}</div>
+        ${driftNote(inspected.image?.drift,active.overview?.drift)}`)}
       ${panel("重建截面",pill(s.state),`<div class="chart-frame">${sectionPlot(s,active.view)}</div>
         <div class="chart-legend"><span><i class="legend-line"></i>标称轮廓</span><span><i class="legend-line outer"></i>外包络</span>
         <span><i class="legend-line inner"></i>内包络</span><span>${s.usable_views} / ${p.views.length} 个有效角度</span></div>${cards(s)}`)}
@@ -208,6 +210,24 @@ function evidenceTable(s) {
     items:[`<button type="button" data-observation="${obs.view_id}">${f(obs.angle,1)}°</button>`,pill(obs.state),
       obs.lower != null ? `${f(obs.lower)} / ${f(obs.upper)}`:"—",support.has(obs.view_id)?"●":"—"],
   })));
+}
+
+function driftNote(drift, recipe) {
+  if (!drift) return "";
+  if (recipe && !recipe.enabled) {
+    return `<div class="notice drift-note">背光漂移补偿在轮廓配方中关闭，当前按原空场归一。开启后可对照原空场缓慢修正两侧亮度差。</div>`;
+  }
+  if (recipe && !recipe.reference) {
+    return `<div class="notice warning drift-note">尚未设置空场参考，漂移补偿不可用，当前按现有配方处理。</div>`;
+  }
+  const tone = drift.state==="compensated" ? "notice" : "notice warning";
+  let detail = "";
+  if (drift.gain_range) detail += ` · 估计亮度增益 ${f(drift.gain_range[0],3)}–${f(drift.gain_range[1],3)}`;
+  if (drift.sides?.left && drift.sides?.right && drift.state==="compensated") {
+    detail += ` · 背景证据 左 ${drift.sides.left.tiles} 格 / 右 ${drift.sides.right.tiles} 格`;
+  }
+  if (drift.suspicious_tiles) detail += ` · ${drift.suspicious_tiles} 格局部异常未计入缓慢变化`;
+  return `<div class="${tone} drift-note">${esc(drift.reason)}${detail}</div>`;
 }
 
 function bindMeasurement() {

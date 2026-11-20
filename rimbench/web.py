@@ -12,6 +12,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from . import audit, audit_docs, documents, fieldcheck, geometry, gridtarget, lighting, quality, setup
 from .compare import compare_profiles, compare_sections
 from .demo import make_demo
+from .drift import overlay_png as drift_overlay_png
 from .domain import (
     InspectionError, MAX_IMAGE_BYTES, MAX_VIEWS, check_revision,
     choice, degrees, integer, number, record,
@@ -21,14 +22,14 @@ from .images import crop_png, gray_from_png, ingest, thumbnail
 from .meter import ImageCache, Meter
 from .profile import ProfileRequest, profile, suggested_range
 from .repeats import available_pairs
-from .silhouette import overlay_png, ratio_preview
 from .snapshots import capture, public_snapshot
 from .store import Store
+from .silhouette import overlay_png, ratio_preview
 from .targets import Window, propose_axis, synthetic_target
 
 
 STATIC = Path(__file__).resolve().parents[1]/"static"
-VIEWS = ("original", "overlay", "normalized")
+VIEWS = ("original", "overlay", "normalized", "drift")
 
 
 def create_app(directory=None):
@@ -293,6 +294,11 @@ def register_reference(app):
         return _in_meter(identity, calculate)
 
 
+def _drift_recipe(project):
+    recipe = project.segmentation
+    return {"enabled": recipe.compensate_drift, "reference": bool(project.reference)}
+
+
 def _required_reference(meter):
     if not meter.project.reference:
         raise InspectionError("当前还未设置空场影像。", status=404, code="missing-reference")
@@ -357,6 +363,9 @@ def register_captures(app):
                 response.set_etag(f"{meta.sha256}-{edge}")
                 return response.make_conditional(request)
             silhouette = meter.view_mask(item)
+            if mode == "drift":
+                decision = silhouette.drift
+                return _png(drift_overlay_png(decision.summary if decision else None, silhouette.mask.shape))
             return _png(overlay_png(silhouette) if mode == "overlay" else ratio_preview(silhouette, edge))
 
         return _in_meter(identity, write)
@@ -396,7 +405,7 @@ def register_measurements(app):
         def calculate(meter):
             return {
                 "axis": meter.axis_summary(), "suggested": suggested_range(meter),
-                "reference": meter.inspect_reference(),
+                "reference": meter.inspect_reference(), "drift": _drift_recipe(meter.project),
             }
 
         return _in_meter(identity, calculate)

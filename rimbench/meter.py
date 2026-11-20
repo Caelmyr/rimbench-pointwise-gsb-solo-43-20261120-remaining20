@@ -14,7 +14,7 @@ from .geometry import (
     metrics, polygon_list, support_planes,
 )
 from .images import gray_from_png, reference_faults
-from .silhouette import Silhouette, extract, observation
+from .silhouette import Silhouette, decide, extract, observation
 
 
 class ImageCache:
@@ -64,9 +64,16 @@ class Meter:
     def view_mask(self, view):
         recipe = self.project.segmentation
         reference = self.project.reference
+
+        def build():
+            source = self.gray(view.asset)
+            flat = self.gray(reference) if reference else None
+            decision = decide(source, recipe, view.exposure, flat)
+            return extract(source, recipe, view.exposure, flat, decision)
+
         return self.cache.acquire(
             ("mask", view.asset, reference, view.exposure, recipe),
-            lambda: extract(self.gray(view.asset), recipe, view.exposure, self.gray(reference) if reference else None),
+            build,
             lambda value: value.mask.nbytes+value.threshold_image.nbytes,
         )
 

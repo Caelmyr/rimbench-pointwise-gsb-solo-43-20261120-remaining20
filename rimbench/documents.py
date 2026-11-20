@@ -95,15 +95,24 @@ def gauges_csv(result):
 def evidence_csv(section):
     rows = [["影像", "转台角 (°)", "截面 (mm)", "影像状态", "左端 (mm)", "右端 (mm)",
              "左端 x (px)", "左端 y (px)", "右端 x (px)", "右端 y (px)",
-             "端点误差 (mm)", "左侧活跃支撑", "右侧活跃支撑", "判定依据"]]
+             "端点误差 (mm)", "左侧活跃支撑", "右侧活跃支撑", "背光漂移补偿", "判定依据"]]
     live = {(plane["view_id"], plane["side"]) for plane in section["active_support"]}
     for row in section["observations"]:
         a, b = row.get("endpoints", [[None, None], [None, None]])
         left = "是" if (row["view_id"], "left") in live else "否"
         right = "是" if (row["view_id"], "right") in live else "否"
         rows.append([row["title"], row["angle"], row["z"], STATES[row["state"]], row.get("lower"), row.get("upper"),
-                     *a, *b, row.get("edge_error_mm"), left, right, row["reason"]])
+                     *a, *b, row.get("edge_error_mm"), left, right,
+                     drift_label(row.get("drift")) or "未补偿", row["reason"]])
     return _csv_fields(rows)
+
+
+def drift_label(drift):
+    if not drift:
+        return None
+    return {
+        "compensated": "已补偿", "compensation-off": "关闭", "compensation-unavailable": "无可信参照",
+    }.get(drift.get("state"), "未补偿")
 
 
 def section_svg(section, *, print_scale=False, include_uncertainty=True, width=630, height=440):
@@ -239,13 +248,14 @@ def html_report(project, section, gauges, *, captured_at=None, snapshot_name=Non
          STATES[row["decision"]], row["detail"]] for row in gauges["rows"]
     ]
     observations = [
-        [row["title"], f"{row['angle']:g}°", STATES.get(row["state"], row["state"]), row["reason"]]
+        [row["title"], f"{row['angle']:g}°", STATES.get(row["state"], row["state"]),
+         drift_label(row.get("drift")) or "未补偿", row["reason"]]
          for row in section["observations"]
     ]
     outline = section_svg(section, print_scale=True)
     scalars = _table(["量值", "结果", "单位", "区间"], values)
     tolerance = _table(["量规", "结果", "单位", "区间", "判定", "依据"], readings)
-    acquisition = _table(["影像", "角度", "轮廓状态", "原因"], observations)
+    acquisition = _table(["影像", "角度", "轮廓状态", "背光漂移补偿", "原因"], observations)
     geometry = project["calibration"]
     scale = geometry["scale_px"]/geometry["scale_mm"]
     basis = escape(f"{project['width']}×{project['height']} px · {scale:.4g} px/mm · {METHOD}")

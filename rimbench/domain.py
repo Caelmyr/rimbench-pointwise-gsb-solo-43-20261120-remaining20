@@ -160,6 +160,7 @@ class Segmentation:
     ambiguity_px: float = 0.8
     min_span: int = 4
     inset: int = 2
+    compensate_drift: bool = False
 
     @classmethod
     def from_data(cls, data):
@@ -171,6 +172,7 @@ class Segmentation:
             number(d["ambiguity_px"], "端点误差像素", 0.1, 6),
             integer(d["min_span"], "最短连续轮廓宽度", 2, 120),
             integer(d["inset"], "画面保护边距", 1, 25),
+            flag(d["compensate_drift"], "背光漂移补偿"),
         )
 
     def data(self):
