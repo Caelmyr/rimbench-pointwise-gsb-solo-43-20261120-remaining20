@@ -79,14 +79,27 @@ def comparisons_csv(result):
 
 
 def gauges_csv(result):
-    rows = [["量规", "量值", "高度 (mm)", "方向 (°)", "下限", "标称", "上限", "单位",
-             "实测值", "区间下限", "区间上限", "判定", "判定依据", "样件版本"]]
+    rows = [["量规", "量值", "高度 (mm)", "设定方向 (°)", "左右偏转 (°)", "实际检查方向 (°)",
+             "下限", "标称", "上限", "单位", "实测值", "区间下限", "区间上限",
+             "限制方向 (°)", "限制尺寸 (mm)", "判定", "判定依据", "样件版本"]]
     for row in result["rows"]:
         gauge = row["gauge"]
+        sweep = row.get("sweep")
+        if sweep:
+            play = sweep["play"]
+            checked = f"{sweep['range'][0]:g} – {sweep['range'][1]:g}"
+            limiting_direction = sweep["limiting_direction"]
+            limiting_value = sweep["limiting_value"]
+        else:
+            play = None
+            checked = gauge["direction"]
+            limiting_direction = None
+            limiting_value = None
         rows.append([
-            gauge["title"], row["metric_label"], gauge["z"], gauge["direction"],
+            gauge["title"], row["metric_label"], gauge["z"], gauge["direction"], play, checked,
             gauge["low"], gauge["nominal"], gauge["high"], row["unit"],
             row["value"], _bound(row["interval"], 0), _bound(row["interval"], 1),
+            limiting_direction, limiting_value,
             STATES[row["decision"]], row["detail"], result["revision"],
         ])
     return _csv_fields(rows)
@@ -235,8 +248,9 @@ def html_report(project, section, gauges, *, captured_at=None, snapshot_name=Non
         for key, value in metrics.items()
     ]
     readings = [
-        [row["gauge"]["title"], _human(row["value"]), row["unit"], _format_interval(row["interval"]),
-         STATES[row["decision"]], row["detail"]] for row in gauges["rows"]
+        [row["gauge"]["title"], _gauge_direction(row), _human(row["value"]), row["unit"],
+         _format_interval(row["interval"]), STATES[row["decision"]], row["detail"]]
+        for row in gauges["rows"]
     ]
     observations = [
         [row["title"], f"{row['angle']:g}°", STATES.get(row["state"], row["state"]), row["reason"]]
@@ -244,7 +258,7 @@ def html_report(project, section, gauges, *, captured_at=None, snapshot_name=Non
     ]
     outline = section_svg(section, print_scale=True)
     scalars = _table(["量值", "结果", "单位", "区间"], values)
-    tolerance = _table(["量规", "结果", "单位", "区间", "判定", "依据"], readings)
+    tolerance = _table(["量规", "方向 (°)", "结果", "单位", "区间", "判定", "依据"], readings)
     acquisition = _table(["影像", "角度", "轮廓状态", "原因"], observations)
     geometry = project["calibration"]
     scale = geometry["scale_px"]/geometry["scale_mm"]
@@ -279,6 +293,13 @@ footer{{margin:25px 0;color:#54716f}}@media print{{body{{margin:0;padding:0}}tab
 
 def _format_interval(values):
     return f"{_human(values[0])} – {_human(values[1])}" if values is not None else "—"
+
+
+def _gauge_direction(row):
+    sweep = row.get("sweep")
+    if sweep:
+        return f"{sweep['set_direction']:g}° ± {sweep['play']:g}°"
+    return f"{row['gauge']['direction']:g}°"
 
 
 def _curve_summary(curve):

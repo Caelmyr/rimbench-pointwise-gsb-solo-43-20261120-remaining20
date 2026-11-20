@@ -8,11 +8,20 @@ export async function gaugesTab(ctx, current) {
   const summary = measured.verification;
   work.innerHTML = panel("量规结果",`<div class="row-actions"><a class="button" href="${base()}/gauges.csv">下载 CSV</a><button type="button" id="new-gauge" class="primary">新增量规</button></div>`,
     `<div class="status-line">${pill(summary.state)} <span>${esc(summary.detail)}</span></div>
-    ${measured.rows.length ? table(["量规","项目","高度","公差范围","实测","误差区间","判定",""], measured.rows.map(row=>{
+    ${measured.rows.length ? table(["量规","项目","高度","方向","公差范围","实测","误差区间","限制方向","判定",""], measured.rows.map(row=>{
       const g = row.gauge;
+      const sweep = row.sweep;
+      const direction = sweep
+        ? `${f(g.direction)}° ± ${f(sweep.play)}°<br><span class="subtext">查 ${f(sweep.range[0])}° – ${f(sweep.range[1])}°</span>`
+        : `${f(g.direction)}°`;
+      const limiting = sweep && sweep.limiting_direction != null
+        ? `${f(sweep.limiting_direction)}°<br><span class="subtext">${f(sweep.limiting_value)} ${esc(row.unit)}</span>`
+        : "—";
       return {items:[esc(g.title),esc(row.metric_label),
         `<button type="button" data-gauge-z="${g.z}" data-gauge-direction="${g.direction}">${f(g.z)} mm</button>`,
+        direction,
         `${f(g.low)} – ${f(g.high)} ${esc(row.unit)}`,`${f(row.value)} ${esc(row.unit)}`,span(row.interval),
+        limiting,
         `<span title="${esc(row.detail)}">${pill(row.decision)}</span>`,`<button type="button" data-gauge-edit="${g.id}">编辑</button>`]};
     })) : '<div class="empty">先设置量值、高度与公差范围。</div>'}`);
   $("#new-gauge").onclick = ()=>gaugeEditor(ctx);
@@ -21,15 +30,17 @@ export async function gaugesTab(ctx, current) {
 }
 
 function gaugeEditor(ctx, editing) {
-  const values = editing || {title:"",metric:"width",z:ctx.active.z,direction:ctx.active.direction,nominal:"",low:"",high:""};
+  const values = editing || {title:"",metric:"width",z:ctx.active.z,direction:ctx.active.direction,play:"",nominal:"",low:"",high:""};
   const form = `<div class="form-grid">${field("title","量规名称",values.title,{type:"text"})}
     ${select("metric","测量项目",metrics,values.metric)}${field("z","物理高度 / mm",values.z)}
-    ${field("direction","方向 / °",values.direction)}${field("nominal","标称",values.nominal,{min:0})}
+    ${field("direction","方向 / °",values.direction)}${field("play","方向游隙 ± / °（仅方向宽度，可留空）",values.play ?? "",{required:false,min:0,max:45})}
+    ${field("nominal","标称",values.nominal,{min:0})}
     ${field("low","下限",values.low,{min:0})}${field("high","上限",values.high,{min:0})}
     ${editing?'<div class="span-all"><button type="button" class="danger" id="delete-gauge">移除量规</button></div>':""}</div>`;
   dialog(editing?"编辑量规":"新增公差量规",form,async formData=>{
     const all = ctx.active.project.gauges;
     const draft = Object.fromEntries(formData);
+    if (!draft.play || draft.metric !== "width") delete draft.play;
     const next = editing ? all.map(g=>g.id===editing.id?{...draft,id:g.id}:g) : [...all,draft];
     await ctx.update("/gauges",{gauges:next},"PUT");
     toast("公差量规已保存");

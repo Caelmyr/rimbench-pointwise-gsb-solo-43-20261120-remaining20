@@ -226,6 +226,13 @@ class Calibration:
 NORMAL_METRICS = ("width", "max_feret", "min_feret", "equivalent_diameter", "area", "roundness")
 
 
+def play_range(value):
+    if value is None:
+        return None
+    parsed = number(value, "方向游隙", 0, 45)
+    return parsed or None
+
+
 @dataclass(frozen=True)
 class Gauge:
     id: str
@@ -236,6 +243,7 @@ class Gauge:
     nominal: float
     low: float
     high: float
+    play: float | None = None
 
     @classmethod
     def from_data(cls, data, identity=None):
@@ -248,9 +256,12 @@ class Gauge:
             number(data.get("nominal"), "标称值", 0, 1e12),
             number(data.get("low"), "下限", 0, 1e12),
             number(data.get("high"), "上限", 0, 1e12),
+            play_range(data.get("play")),
         )
         if not out.low <= out.nominal <= out.high:
             raise InspectionError("下限、标称值和上限必须按顺序排列。")
+        if out.play is not None and out.metric != "width":
+            raise InspectionError("方向游隙仅适用于指定方向宽度量规。", code="play-not-width")
         return out
 
     def data(self):

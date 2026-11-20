@@ -167,6 +167,53 @@ def projected_width(polygon, direction):
     return float(np.max(coordinates)-np.min(coordinates))
 
 
+SWEEP_PERIOD = 180.0
+
+
+def width_sweep(polygon, center, half_range):
+    """Exact extrema of the directional width over an arc of directions.
+
+    Directional width repeats every 180°, so a short arc crossing 0° is
+    treated as adjacent directions on the 180° circle. The widest direction
+    may sit between sampled angles: the maximum comes from vertex chords
+    projected onto the arc, the minimum from widths at the arc ends and at
+    edge-normal transitions. Returns {"max": [angle, value], "min": [angle,
+    value]} with angles in degrees, or None when there is no polygon.
+    """
+    if polygon is None:
+        return None
+    points = np.asarray(polygon, dtype=np.float64)
+    if len(points) < 2:
+        return None
+    half = abs(float(half_range))
+    start = float(center)-half
+    length = 2.0*half
+    deltas = points[None, :, :]-points[:, None, :]
+    chords = np.hypot(deltas[:, :, 0], deltas[:, :, 1])
+    phi = np.degrees(np.arctan2(deltas[:, :, 1], deltas[:, :, 0]))
+    shifted = (phi-start) % SWEEP_PERIOD
+    distance = np.where(shifted <= length, 0.0, np.minimum(shifted-length, SWEEP_PERIOD-shifted))
+    gains = chords*np.cos(np.radians(distance))
+    row, col = divmod(int(np.argmax(gains)), len(points))
+    if shifted[row, col] <= length:
+        nearest = shifted[row, col]
+    elif shifted[row, col]-length <= SWEEP_PERIOD-shifted[row, col]:
+        nearest = length
+    else:
+        nearest = 0.0
+    widest = [float((start+nearest) % 360.0), float(gains[row, col])]
+    edges = points-np.roll(points, 1, axis=0)
+    psi = np.degrees(np.arctan2(edges[:, 1], edges[:, 0]))+90.0
+    turns = (psi-start) % SWEEP_PERIOD
+    angles = np.concatenate(([0.0, length], turns[turns <= length]))+start
+    normals = np.column_stack((np.cos(np.radians(angles)), np.sin(np.radians(angles))))
+    projections = points @ normals.T
+    spans = projections.max(axis=0)-projections.min(axis=0)
+    index = int(np.argmin(spans))
+    narrowest = [float(angles[index]) % 360.0, float(spans[index])]
+    return {"max": widest, "min": narrowest}
+
+
 def feret_diameters(polygon):
     vectors = np.roll(polygon, -1, axis=0)-polygon
     norms = np.linalg.norm(vectors, axis=1)

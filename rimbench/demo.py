@@ -109,6 +109,8 @@ def _gauges(kind):
         settings = [
             {"title": "中段 X 向尺寸", "metric": "width", "z": 22, "direction": 0,
              "nominal": 33, "low": 32.2, "high": 33.8},
+            {"title": "中段装夹游隙宽度", "metric": "width", "z": 22, "direction": 2,
+             "play": 3, "nominal": 33, "low": 32.2, "high": 33.8},
             {"title": "上口短轴", "metric": "min_feret", "z": 40, "direction": 0,
              "nominal": 20.5, "low": 20.1, "high": 21.1},
             {"title": "底部截面积", "metric": "area", "z": 6, "direction": 0,
