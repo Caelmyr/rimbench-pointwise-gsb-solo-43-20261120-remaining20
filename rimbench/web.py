@@ -643,6 +643,7 @@ def register_inspection(app):
             drawing, parameters = gridtarget.grid_fixture(
                 project.width, project.height, project.calibration.px_per_mm,
                 distortion=request.args.get("type") == "distorted",
+                tilted=request.args.get("type") == "tilted",
             )
         if request.path.endswith(".png"):
             return _png(drawing)

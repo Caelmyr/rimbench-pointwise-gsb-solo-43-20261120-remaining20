@@ -134,7 +134,7 @@ def field_sheet(result):
 
 def grid_sheet(result):
     yield ["状态", status(result["state"]), "检测圆点", result["detected"]]
-    yield ["行", "列", "名义 X (mm)", "名义 Y (mm)", "实测 X (px)", "实测 Y (px)", "残差 (px)",
+    yield ["行", "列", "名义 X (mm)", "名义 Y (mm)", "实测 X (px)", "实测 Y (px)", "线性残差 (px)",
            "定位状态", "清晰度状态", "径向过渡宽度中值 (px)", "过渡宽度 P90 (px)", "有效径向数"]
     for row in result["points"]:
         focus = row["focus"]
@@ -148,6 +148,27 @@ def grid_sheet(result):
     for row in result["intervals"]:
         start, end = ([str(value+1) for value in row[key]] for key in ("start", "end"))
         yield [row["axis"], "/".join(start), "/".join(end), row["scale"], row["deviation"]]
+    perspective = result.get("perspective")
+    if perspective:
+        yield []
+        yield ["斜放复检判读", status(perspective["state"]), "可可靠解释为同一平面透视",
+               "是" if perspective["reliable"] else "否"]
+        yield ["有效圆点", perspective["detected"], "平面内点数", perspective["inlier_count"],
+               "行覆盖", perspective["row_span"], "列覆盖", perspective["column_span"]]
+        yield ["线性 RMS (px)", perspective["linear_rms_px"], "平面 RMS (px)", perspective["plane_rms_px"],
+               "RMS 改善比例", perspective["rms_reduction"], "近远端尺度差异",
+               perspective["near_far_scale_difference"]]
+        yield ["平面最大残差 (px)", perspective["plane_max_residual_px"],
+               "最大残差位置", "/".join(str(value+1) for value in perspective["plane_max_at"])
+               if perspective["plane_max_at"] else None]
+        for reason in perspective["reasons"]:
+            yield ["斜放复检依据", reason]
+        yield ["行", "列", "平面拟合 X (px)", "平面拟合 Y (px)", "平面残差 (px)", "线性残差 (px)", "是否平面内点"]
+        for row in perspective.get("points", []):
+            yield [
+                row["row"]+1, row["column"]+1, *row["plane_fit_px"], row["plane_residual_px"],
+                row["linear_residual_px"], "是" if row["plane_inlier"] else "否",
+            ]
 
 
 SHEETS = {

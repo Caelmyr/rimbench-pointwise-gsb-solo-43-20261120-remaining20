@@ -7,12 +7,25 @@ import numpy as np
 
 from .domain import InspectionError, integer, number, record
 from .gridfocus import field_focus
+from .gridplane import perspective_review
 from .images import png_from_array
 from .targets import Window, measure_target
 
 
 MIN_REGISTERED = 6
 CORNERS = ("top_left", "top_right", "bottom_left", "bottom_right")
+
+
+def _flag(value, label):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in ("true", "on", "1", "yes"):
+        return True
+    if isinstance(value, str) and value.lower() in ("false", "off", "0", ""):
+        return False
+    if value is None:
+        return False
+    raise InspectionError(f"{label}必须为开或关。")
 
 
 @dataclass(frozen=True)
@@ -25,6 +38,7 @@ class GridRequest:
     scale_limit: float
     residual_limit: float
     focus_limit: float
+    perspective: bool
 
     @classmethod
     def parse(cls, doc, width, height):
@@ -43,7 +57,8 @@ class GridRequest:
         scale_limit = number(data.get("scale_limit", 0.015), "容许像素比例偏差", 0.001, 0.50)
         distortion = number(data.get("residual_limit", 0.35), "容许定位残差", 0.01, 20)
         focus = number(data.get("focus_limit", 2.8), "圆靶边缘宽度限值", 0.2, 16)
-        parsed = cls(tuple(anchors), pitch_x, pitch_y, radius, expected, scale_limit, distortion, focus)
+        perspective = _flag(data.get("perspective", False), "斜放复检开关")
+        parsed = cls(tuple(anchors), pitch_x, pitch_y, radius, expected, scale_limit, distortion, focus, perspective)
         parsed.check_spacing()
         return parsed
 
@@ -89,6 +104,7 @@ class GridRequest:
             "scale_limit": self.scale_limit,
             "residual_limit": self.residual_limit,
             "focus_limit": self.focus_limit,
+            "perspective": self.perspective,
         }
 
 
@@ -210,59 +226,107 @@ def inspect_grid(gray, request):
         "summary": None,
         "intervals": intervals,
         "focus": focus,
+        "perspective": None,
     }
     spread = (len({row["row"] for row in valid}), len({row["column"] for row in valid}))
-    if len(valid) < MIN_REGISTERED or min(spread) < 3:
-        return result
-    grid = TargetGrid.from_detected(valid)
-    fit = grid.analysis() if grid else None
-    if fit is None:
-        return result
-    mark_residuals(rows, grid)
-    largest = max(valid, key=lambda row: row["residual_px"])
-    detector = float(np.sqrt(np.mean([row["residual_px"]**2 for row in valid])))
-    outliers = [row for row in valid if row["residual_px"] > request.residual_limit]
-    deviations = [abs(fit[axis]/request.expected-1) for axis in ("x_scale", "y_scale")]
-    outside_pitch = sum(abs(row["deviation"]) > request.scale_limit for row in intervals)
-    warnings = []
-    if outliers:
-        warnings.append("靶心定位对线性标尺的残差超过限值。")
-    if max(deviations) > request.scale_limit or outside_pitch:
-        warnings.append("整体或局部的像素比例偏离工位标尺。")
-    if len(valid) < len(rows):
-        warnings.append("部分标板圆点无法读取。")
-    if focus["wide_targets"]:
-        warnings.append("部分圆靶的成像过渡带超过清晰度限值。")
-    result.update(
-        state="review" if warnings else "checked",
-        fit=fit,
-        summary={
-            "maximum_residual": largest["residual_px"],
-            "maximum_at": [largest["row"], largest["column"]],
-            "rms_residual": detector,
-            "max_global_scale_deviation": max(deviations),
-            "outside_scale_intervals": outside_pitch,
-            "detected_but_outside_residual": len(outliers),
-            "warnings": warnings,
-        },
-    )
+    linear_ready = len(valid) >= MIN_REGISTERED and min(spread) >= 3
+    if linear_ready:
+        grid = TargetGrid.from_detected(valid)
+        fit = grid.analysis() if grid else None
+        if fit is not None:
+            mark_residuals(rows, grid)
+            largest = max(valid, key=lambda row: row["residual_px"])
+            detector = float(np.sqrt(np.mean([row["residual_px"]**2 for row in valid])))
+            outliers = [row for row in valid if row["residual_px"] > request.residual_limit]
+            deviations = [abs(fit[axis]/request.expected-1) for axis in ("x_scale", "y_scale")]
+            outside_pitch = sum(abs(row["deviation"]) > request.scale_limit for row in intervals)
+            warnings = []
+            if outliers:
+                warnings.append("靶心定位对线性标尺的残差超过限值。")
+            if max(deviations) > request.scale_limit or outside_pitch:
+                warnings.append("整体或局部的像素比例偏离工位标尺。")
+            if len(valid) < len(rows):
+                warnings.append("部分标板圆点无法读取。")
+            if focus["wide_targets"]:
+                warnings.append("部分圆靶的成像过渡带超过清晰度限值。")
+            result.update(
+                state="review" if warnings else "checked",
+                fit=fit,
+                summary={
+                    "maximum_residual": largest["residual_px"],
+                    "maximum_at": [largest["row"], largest["column"]],
+                    "rms_residual": detector,
+                    "max_global_scale_deviation": max(deviations),
+                    "outside_scale_intervals": outside_pitch,
+                    "detected_but_outside_residual": len(outliers),
+                    "warnings": warnings,
+                },
+            )
+    # 斜放复检独立于线性拟合：线性结果保持原样，透视结论单独给出。
+    if request.perspective:
+        result["perspective"] = perspective_review(rows, request.residual_limit)
     return result
 
 
-def grid_fixture(width, height, scale, *, distortion=False):
+def grid_fixture(width, height, scale, *, distortion=False, tilted=False):
     radius = max(2, min(12, int(min(width, height)*0.022)))
     pitch = min(width, height)*0.27
     origin_x = (width-1)/2-pitch
     origin_y = (height-1)/2-pitch
     tilt = 0.016*pitch
+    y, x = np.ogrid[:height, :width]
+    canvas = (0.86+0.03*np.cos(x/max(width, 1)*4)-0.02*y/height).astype(np.float32)
+    if tilted:
+        # 合成整块平面标板斜靠支架：用真实单应把等距网格投影到影像，近大远小。
+        board_grid = np.asarray([
+            [column*pitch, row*pitch]
+            for row in range(3) for column in range(3)
+        ], dtype=float)
+        board_center = np.array([pitch, pitch])
+        line_y = 0.00045
+        depth = 1.0
+        linear_part = np.array([[1.0, 0.02], [-0.015, 0.98]])
+        origin_denominator = depth-line_y*pitch
+        translation = np.array([(width-1)/2, (height-1)/2]) - \
+            linear_part@(board_center*origin_denominator)
+        homography = np.array([
+            [linear_part[0, 0], linear_part[0, 1], translation[0]],
+            [linear_part[1, 0], linear_part[1, 1], translation[1]],
+            [0, line_y, depth],
+        ])
+        projected = (homography@np.column_stack([board_grid, np.ones(len(board_grid))]).T).T
+        centers = projected[:, :2]/projected[:, 2:3]
+        if np.any(centers < radius+2) or np.any(centers[:, 0] > width-radius-2) or \
+                np.any(centers[:, 1] > height-radius-2):
+            raise InspectionError("斜放合成标板超出画幅，请使用更大的工位画幅。", code="grid-fixture-frame")
+        corners = (
+            tuple(centers[0]), tuple(centers[2]),
+            tuple(centers[6]), tuple(centers[8]),
+        )
+        for cx, cy in centers:
+            d = np.hypot(x-cx, y-cy)
+            coverage = np.clip(radius+0.65-d, 0, 1)
+            canvas *= 1-coverage*0.85
+        guess = {name: {"x": float(point[0]), "y": float(point[1])} for name, point in zip(CORNERS, corners)}
+        # 透视下四角双线性估计与真实圆点偏差较大，放宽搜索半径保证九点都能定位。
+        search_radius = min(45, max(radius+5, int(0.16*pitch)))
+        params = {
+            **guess,
+            "pitch_x": pitch/scale,
+            "pitch_y": pitch/scale,
+            "expected": scale,
+            "radius": search_radius,
+            "scale_limit": 0.015,
+            "residual_limit": 0.35,
+            "focus_limit": 2.8,
+        }
+        return png_from_array(np.rint(canvas*65535).astype(np.uint16)), params
     corners = (
         (origin_x, origin_y),
         (origin_x+2*pitch, origin_y+2*tilt),
         (origin_x-2*tilt, origin_y+2*pitch),
         (origin_x+2*pitch-2*tilt, origin_y+2*pitch+2*tilt),
     )
-    y, x = np.ogrid[:height, :width]
-    canvas = (0.86+0.03*np.cos(x/max(width, 1)*4)-0.02*y/height).astype(np.float32)
     for row in range(3):
         for column in range(3):
             cx = origin_x+column*pitch-row*tilt
@@ -274,12 +338,14 @@ def grid_fixture(width, height, scale, *, distortion=False):
             coverage = np.clip(radius+0.65-d, 0, 1)
             canvas *= 1-coverage*0.85
     guess = {name: {"x": point[0], "y": point[1]} for name, point in zip(CORNERS, corners)}
+    # 畸变样例把中央圆点挪离估计位置，需要更宽的搜索框把偏移后的整颗圆点包住。
+    search_radius = min(45, max(radius+5, math.ceil(radius*1.7))) if distortion else min(45, radius+5)
     params = {
         **guess,
         "pitch_x": math.hypot(pitch, tilt)/scale,
         "pitch_y": math.hypot(pitch, tilt)/scale,
         "expected": scale,
-        "radius": min(45, radius+5),
+        "radius": search_radius,
         "scale_limit": 0.015,
         "residual_limit": 0.35,
         "focus_limit": 2.8,

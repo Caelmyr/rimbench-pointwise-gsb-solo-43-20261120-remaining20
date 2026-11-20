@@ -35,3 +35,4 @@ dialog{padding:0;border:1px solid var(--line);border-radius:12px;max-width:min(6
 .audit-grid-image svg{height:100%;pointer-events:none}
 #audit-result:focus{outline:none}
 #audit-result:focus-visible{outline:2px solid #65a895;outline-offset:2px}
+.plane-panel{margin-top:14px;border-color:#cdded4}.plane-panel .panel-head h2{color:#106954}.plane-legend{padding:8px 14px 0}.plane-reasons{margin:8px 0 4px;padding-left:18px;color:#537168;font-size:12px}.plane-reasons li{margin:3px 0}.plane-panel h3{font-size:13px;margin:14px 0 6px;color:#27443d}.plane-panel .notice.error{margin-top:12px}label.field.check{flex-direction:row;align-items:center;font-size:12px;font-weight:580}label.field.check input{width:16px}

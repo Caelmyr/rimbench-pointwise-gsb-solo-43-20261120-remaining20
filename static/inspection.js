@@ -27,6 +27,8 @@ const labels = {
   "uneven-plateau":"背景或暗部不均", "low-contrast":"反差不足", "no-transition":"缺少过渡",
   "incomplete-transition":"只读到部分过渡", "unstable-transition":"过渡不唯一",
   "current-revision":"当前版本", "earlier-revision":"历史版本", "legacy-method":"旧版计算方法",
+  "plane-checked":"斜放可解释为同一平面", "plane-review":"斜放后仍有圆点偏离",
+  "plane-insufficient":"有效点不足，请复拍",
 };
 
 const cornerNames = {top_left:"左上",top_right:"右上",bottom_left:"左下",bottom_right:"右下"};
@@ -75,7 +77,7 @@ function setupDefaults(active) {
       top_left_x:f(width*.25),top_left_y:f(height*.25),top_right_x:f(width*.75),top_right_y:f(height*.25),
       bottom_left_x:f(width*.25),bottom_left_y:f(height*.75),bottom_right_x:f(width*.75),bottom_right_y:f(height*.75),
       pitch_x:10,pitch_y:10,radius:12,expected:f(active.overview?.axis.frame.px_per_mm,4),
-      scale_limit:0.015,residual_limit:0.35,focus_limit:2.8,
+      scale_limit:0.015,residual_limit:0.35,focus_limit:2.8,perspective:false,
     },
   };
 }
@@ -160,7 +162,8 @@ function requestForm(kind, ctx, pairs) {
     }
   } else if (uploadKinds.has(kind)) {
     const file = store.upload[kind];
-    const fixture = kind==="field" ? [["gain","合成整体偏移"],["local","合成局部异常"]] : [["regular","合成规整标板"],["distorted","合成畸变标板"]];
+    const fixture = kind==="field" ? [["gain","合成整体偏移"],["local","合成局部异常"]] :
+      [["regular","合成规整标板"],["distorted","合成畸变标板"],["tilted","合成斜放标板"]];
     markup = `<div class="span-all audit-upload">
       ${field("image",kind==="field"?"新拍空场影像":"标板影像","",{type:"file",accept:"image/png,image/jpeg,image/tiff,image/bmp",required:false})}
       <span class="subtext" id="audit-file-name">${esc(file?.name || "请选择影像或合成样例")}</span>
@@ -174,7 +177,9 @@ function requestForm(kind, ctx, pairs) {
       markup += input("pitch_x","横向点距 / mm",{min:.01})+input("pitch_y","纵向点距 / mm",{min:.01})+input("expected","预期 px/mm",{min:.001})+
         input("radius","圆点搜索半径 / px",{min:4,max:45})+input("scale_limit","比例偏差限值",{min:.001})+
         input("residual_limit","定位残差限值 / px",{min:.01})+input("focus_limit","过渡宽度限值 / px",{min:.2})+
-        `<details class="span-all"><summary>圆靶估计中心</summary><div class="audit-subform">${Object.entries(cornerNames).map(([key,name])=>
+        `<label class="field check span-all"><input type="checkbox" name="perspective" ${v.perspective ? "checked" : ""}>
+          斜放复检：用同一平面的透视（单应）模型复核定位残差，隔离个别偏点</label>
+        <details class="span-all"><summary>圆靶估计中心</summary><div class="audit-subform">${Object.entries(cornerNames).map(([key,name])=>
           input(key+"_x",name+" X / px")+input(key+"_y",name+" Y / px")).join("")}</div></details>`;
     }
   }
@@ -193,6 +198,7 @@ function toParams(kind, values) {
     result.window = Object.fromEntries(["x","y","width","height"].map(key=>[key,result[key]]));
     ["x","y","width","height"].forEach(key=>delete result[key]);
   } else if (kind==="grid") {
+    result.perspective = result.perspective === "on" || result.perspective === true;
     Object.keys(cornerNames).forEach(key=>{
       result[key] = {x:result[key+"_x"],y:result[key+"_y"]};
       delete result[key+"_x"];
@@ -248,6 +254,8 @@ function bindRequest(ctx, current, root) {
         parameters[key+"_y"] = f(parameters[key].y,3);
         delete parameters[key];
       });
+      // 斜放合成样例默认打开斜放复检；其余样例保留用户当前选择。
+      parameters.perspective = type === "tilted" ? true : (store.values[kind].perspective === "on" || store.values[kind].perspective === true);
       Object.assign(store.values[kind],parameters);
     }
     await ctx.render();
@@ -505,25 +513,77 @@ function fieldOutput(data) {
     ])):""}`;
 }
 
+function planeState(value) {
+  const key = value === "checked" ? "plane-checked" : value === "insufficient" ? "plane-insufficient" : "plane-review";
+  const cls = value === "checked" ? "good" : value === "insufficient" ? "bad" : "warn";
+  return `<span class="pill ${cls}">${esc(labels[key])}</span>`;
+}
+
 function gridOutput(data) {
   const fit=data.fit;
   const s=data.summary;
   const focus=data.focus;
+  const plane=data.perspective;
+  const planePoint = plane ? new Map(plane.points.map(row=>[`${row.row}-${row.column}`,row])) : null;
+  const dotStroke = (row) => {
+    if (!row.observed_px) return "#f9a680";
+    if (!plane) return "#65e0b1";
+    const entry = planePoint.get(`${row.row}-${row.column}`);
+    return entry?.plane_inlier ? "#65e0b1" : "#ff7a59";
+  };
   const grid = data.image ? `<figure class="audit-grid-image"><img src="${data.image}" alt="九点标板原图"><svg viewBox="0 0 ${data.frame.join(" ")}" class="image-overlay" aria-hidden="true">
     ${data.points.map(row=>{
       const pt=row.observed_px || row.predicted_location;
       const [x,y]=pt;
-      const stroke = row.observed_px ? "#65e0b1" : "#f9a680";
+      const stroke = dotStroke(row);
       return `<circle cx="${x}" cy="${y}" r="4" stroke="${stroke}" fill="none" stroke-width="1.6"/>
         <path d="M${x-7} ${y}h14M${x} ${y-7}v14" stroke="${stroke}" stroke-width="1.3"/>`;
     }).join("")}</svg></figure>`:"";
+  const legend = plane ? `<p class="subtext plane-legend">圆点标记：<b style="color:#2f9e6e">绿色＝透视平面内点</b>，
+    <b style="color:#c8502f">橙色＝平面拟合后仍偏离，需单独排查</b>，空心＝未定位。</p>` : "";
+  const pointRows = data.points.map(row=>{
+    const entry = planePoint?.get(`${row.row}-${row.column}`);
+    const planeCell = entry ? `${px(entry.plane_residual_px)}${entry.plane_inlier ? "" : " · 偏离"}` : "—";
+    return [
+      `${row.row+1} / ${row.column+1}`,point(row.observed_px),px(row.residual_px),
+      ...(plane ? [planeCell] : []),
+      resultState(row.focus.state),px(row.focus.widths?.p90),
+    ];
+  });
+  const heads = ["标板位置","实测中心","线性残差",...(plane ? ["透视平面残差"] : []),"清晰度","过渡宽度 P90"];
   return `${cards([["判读",textState(data.state)],["圆点",`${data.detected} / 9`],["横向 px/mm",f(fit?.x_scale,4)],
-    ["纵向 px/mm",f(fit?.y_scale,4)],["最大定位残差",px(s?.maximum_residual)],
+    ["纵向 px/mm",f(fit?.y_scale,4)],["最大线性残差",px(s?.maximum_residual)],
     ["最宽过渡 P90",px(focus.max_target_p90)],["横纵夹角",angle(fit?.angle_between_axes)]])}
     ${s?.warnings.length?`<div class="notice warning">${esc(s.warnings.join(" "))}</div>`:""}
     <div class="audit-visuals ${grid?"":"single"}">${grid}
-    ${rows(["标板位置","实测中心","残差","清晰度","过渡宽度 P90"],data.points.map(row=>[
-      `${row.row+1} / ${row.column+1}`,point(row.observed_px),px(row.residual_px),
-      resultState(row.focus.state),px(row.focus.widths?.p90),
-    ]))}</div>`;
+    ${rows(heads,pointRows)}</div>${legend}${plane ? perspectivePanel(plane) : ""}`;
+}
+
+function perspectivePanel(plane) {
+  const cardsRow = cards([
+    ["斜放复检", planeState(plane.state)],
+    ["平面内点", `${plane.inlier_count} / ${plane.detected}`],
+    ["平面拟合 RMS", px(plane.plane_rms_px)],
+    ["平面最大残差", px(plane.plane_max_residual_px)],
+    ["近远端点距差异", plane.near_far_scale_difference == null ? "—" : percent(plane.near_far_scale_difference)],
+    ["相对线性 RMS 改善", plane.rms_reduction == null ? "—" : percent(plane.rms_reduction)],
+  ]);
+  const coverage = `有效点行/列覆盖 ${plane.row_span} / ${plane.column_span}（需各为 3），残差限值 ${f(plane.residual_limit_px,2)} px。`;
+  const reasons = plane.reasons.length ? `<ul class="plane-reasons">${plane.reasons.map(text=>`<li>${esc(text)}</li>`).join("")}</ul>` : "";
+  const outlierRows = plane.remaining_outliers.length ? rows(
+    ["仍偏离的圆点","实测中心","平面拟合中心","平面残差","原线性残差"],
+    plane.remaining_outliers.map(row=>[
+      `${row.row+1} / ${row.column+1}`, point(row.observed_px), point(row.plane_fit_px),
+      px(row.plane_residual_px), px(row.linear_residual_px),
+    ]),
+  ) : `<p class="subtext">没有圆点在透视模型下继续偏离，线性检查的残差可由整块板斜放解释。</p>`;
+  return `<section class="panel plane-panel" aria-label="斜放复检">
+    <header class="panel-head"><h2>斜放复检（同一平面透视）</h2>
+      <span class="subtext">${plane.reliable ? "可可靠解释为平面透视变化" : "斜放解释不充分或仍有偏点"}</span></header>
+    <div class="panel-body">${cardsRow}
+      <p class="subtext">${esc(coverage)}</p>
+      ${reasons}
+      <h3>仍需排查的圆点</h3>${outlierRows}
+      ${plane.state === "insufficient" ? `<div class="notice error">有效点数量或分布不足以支撑透视拟合，请重新摆正、补光或靠近后复拍，不要凭拟合图直接放行。</div>` : ""}
+    </div></section>`;
 }
