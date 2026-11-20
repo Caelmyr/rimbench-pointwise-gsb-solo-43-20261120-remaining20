@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#173e37">
+<title>RimBench · 转台轮廓计量</title>
+<link rel="stylesheet" href="/static/style.css">
+<script defer type="module" src="/static/app.js"></script>
+</head>
+<body>
+<header class="masthead">
+  <a class="brand" href="/" aria-label="RimBench 首页">
+    <span class="brand-symbol" aria-hidden="true">◈</span><span>RimBench</span>
+  </a>
+  <span class="brand-sub">转台轮廓计量</span>
+  <div class="mast-spacer"></div>
+  <span id="health" class="health"><i></i>连接工作站</span>
+</header>
+<div class="layout">
+ <aside class="sidebar" aria-label="样件和工作区">
+  <div class="side-head"><span>检验样件</span><button type="button" id="new-project" class="icon-button" aria-label="新建样件" title="新建样件">＋</button></div>
+  <div id="project-list" class="project-list"></div>
+  <div class="aside-tools">
+    <button type="button" data-demo="stepped"><span>◇</span> 阶梯衬套演示</button>
+    <button type="button" data-demo="eccentric"><span>◇</span> 偏心导套演示</button>
+    <button type="button" id="load-bundle"><span>↥</span> 导入样件交换包</button>
+  </div>
+  <div id="station-summary" class="station-summary"></div>
+  <div class="sidebar-footer"><span>实验室工作站</span><strong>RB</strong></div>
+ </aside>
+ <main id="workspace">
+  <section id="welcome" class="welcome">
+    <div class="welcome-content">
+      <div class="welcome-symbol" aria-hidden="true">◈</div>
+      <h1>从背光投影到截面尺寸</h1>
+      <p>导入固定相机的多角度样件影像，校准转轴，逐层检查轮廓、公差与复测记录。</p>
+      <div class="welcome-actions"><button type="button" class="primary" data-demo="stepped">打开阶梯衬套演示</button><button type="button" id="welcome-create">新建检验样件</button></div>
+    </div>
+  </section>
+  <div id="project-workspace" hidden>
+    <section class="project-header">
+      <div><div id="project-meta" class="meta"></div><h1 id="project-title"></h1></div>
+      <div class="header-tools"><button id="project-edit" type="button">样件信息</button><a id="bundle-download" class="button" href="#">导出样件</a></div>
+    </section>
+    <nav class="work-tabs" aria-label="工作区">
+      <button type="button" data-tab="measure">截面测量</button>
+      <button type="button" data-tab="capture">采集与标定</button>
+      <button type="button" data-tab="inspection">形位与质检</button>
+      <button type="button" data-tab="gauges">公差量规</button>
+      <button type="button" data-tab="records">快照与复测</button>
+    </nav>
+    <div id="work-panel" class="work-panel" aria-live="polite"></div>
+  </div>
+ </main>
+</div>
+<dialog id="modal"><form id="modal-form"><header><h2 id="modal-title"></h2><button type="button" class="icon-button" id="modal-close" aria-label="关闭">×</button></header><div id="modal-body"></div><div class="dialog-error" id="modal-error" role="alert"></div><footer><button id="modal-cancel" type="button">取消</button><button class="primary" id="modal-submit" type="submit">保存</button></footer></form></dialog>
+<div id="toast" role="status" hidden></div>
+</body>
+</html>

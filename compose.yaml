@@ -1,0 +1,17 @@
+name: solo46-rimbench
+services:
+  rimbench:
+    build: .
+    image: solo46-rimbench:1.0
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:${RIMBENCH_PORT:-18946}:8000"
+    volumes:
+      - inspection-data:/var/lib/rimbench
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+volumes:
+  inspection-data:
